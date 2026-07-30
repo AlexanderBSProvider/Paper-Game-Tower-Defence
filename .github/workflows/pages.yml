@@ -1,0 +1,48 @@
+# Публікація гри на GitHub Pages.
+#
+# Білд-степу немає (так і задумано в плані), тож «збірка» — це відбір файлів:
+# у Pages їде тільки те, що є грою. tools/ лишається в репо, але не на хостингу:
+# там живе проксі до Gemini, і його місце — лише на машині розробника.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Деплой один за раз; проміжні пуші не мають ганяти зайві білди.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # enablement: true вмикає Pages сам, якщо їх ще не вмикали руками.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Зібрати статику гри
+        run: |
+          mkdir -p _site
+          cp -r index.html src lib data _site/
+          touch _site/.nojekyll   # інакше Jekyll лізе обробляти те, що обробляти не треба
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
