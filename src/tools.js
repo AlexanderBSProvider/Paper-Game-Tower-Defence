@@ -7,7 +7,7 @@ import { Graphics } from '../lib/pixi.min.mjs';
 import { KINDS } from './game.js';
 import { lineCells } from './grid.js';
 
-export function createTools({ app, canvas, world, layout, game, look, balance }) {
+export function createTools({ app, canvas, world, layout, game, look, balance, hud }) {
   const ghost = new Graphics();
   world.addChild(ghost);
 
@@ -17,14 +17,27 @@ export function createTools({ app, canvas, world, layout, game, look, balance })
   let last = null; // остання клітинка риски
   const strokeSeen = new Set();
 
+  /** Екранні пікселі рушія: канвас може бути розтягнутий CSS-ом. */
+  function screenAt(ev) {
+    const r = canvas.getBoundingClientRect();
+    return [
+      (ev.clientX - r.left) * (app.screen.width / r.width),
+      (ev.clientY - r.top) * (app.screen.height / r.height),
+    ];
+  }
+
   /** Клітинка під вказівником. Для 2×2 центруємо фігуру на пальці. */
   function cellAt(ev, w = 1, h = 1) {
-    const r = canvas.getBoundingClientRect();
-    const sx = app.screen.width / r.width;
-    const sy = app.screen.height / r.height;
-    const x = ((ev.clientX - r.left) * sx - layout.ox) / layout.cell;
-    const y = ((ev.clientY - r.top) * sy - layout.oy) / layout.cell;
+    const [px, py] = screenAt(ev);
+    const x = (px - layout.ox) / layout.cell;
+    const y = (py - layout.oy) / layout.cell;
     return [Math.floor(x - w / 2 + 0.5), Math.floor(y - h / 2 + 0.5)];
+  }
+
+  function setTool(t) {
+    tool = t;
+    hud?.setTool(t);
+    redrawGhost();
   }
 
   function redrawGhost() {
@@ -65,6 +78,9 @@ export function createTools({ app, canvas, world, layout, game, look, balance })
 
   function onDown(ev) {
     ev.preventDefault();
+    // Поля — не поле: тап по нотатках лише перемикає інструмент.
+    const picked = hud?.hit(...screenAt(ev));
+    if (picked) { setTool(picked); return; }
     canvas.setPointerCapture?.(ev.pointerId);
     drawing = true;
     strokeSeen.clear();
@@ -102,15 +118,17 @@ export function createTools({ app, canvas, world, layout, game, look, balance })
   canvas.addEventListener('pointercancel', onUp);
   canvas.addEventListener('pointerleave', onLeave);
 
-  // Тимчасово, поки немає HUD: 1 стіна, 2 магічна, 3 гармата, E ластик.
+  // Клавіші-дублери для десктопа: 1 стіна, 2 магічна, 3 гармата, E ластик.
   const keys = { 1: 'wall', 2: 'magic_tower', 3: 'cannon', e: 'eraser', E: 'eraser' };
   window.addEventListener('keydown', (ev) => {
     const t = keys[ev.key];
-    if (t) { tool = t; redrawGhost(); }
+    if (t) setTool(t);
   });
+
+  hud?.setTool(tool);
 
   return {
     get tool() { return tool; },
-    setTool(t) { tool = t; redrawGhost(); },
+    setTool,
   };
 }

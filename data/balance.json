@@ -1,14 +1,16 @@
 {
   "_": "Швидкість у клітинках/с, радіус у клітинках, темп у пострілах/с. Оскільки все в клітинках, а не в пікселях, баланс однаковий на будь-якому екрані.",
 
-  "economy": { "startGold": 150 },
+  "economy": { "startInk": 120, "refund": 0.5, "gauge": 200 },
+
+  "build": { "wall": 5, "magic_tower": 60, "cannon": 100 },
 
   "enemies": {
-    "earling": { "rig": "earling", "hp": 40, "speed": 1.5, "bounty": 9 }
+    "earling": { "rig": "earling", "hp": 40, "speed": 1.5, "bounty": 8 }
   },
 
   "towers": {
-    "magic_tower": { "rig": "magic_tower", "cost": 70, "damage": 12, "rate": 1.1, "range": 4.2, "projectile": "bolt" },
-    "cannon": { "rig": "cannon", "cost": 120, "damage": 30, "rate": 0.55, "range": 3.6, "projectile": "ball", "splash": 1.5 }
+    "magic_tower": { "rig": "magic_tower", "damage": 12, "rate": 1.1, "range": 4.2, "projectile": "bolt" },
+    "cannon": { "rig": "cannon", "damage": 30, "rate": 0.55, "range": 3.6, "projectile": "ball", "splash": 1.5 }
   }
 }

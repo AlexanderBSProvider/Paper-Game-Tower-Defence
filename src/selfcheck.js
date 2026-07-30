@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { buildPath, posAt, distToPath } from './pathmath.js';
 import { createGrid, lineCells, WALL, BASE } from './grid.js';
 import { computeFlow, reaches, stepFrom, routeFrom, simplify, wouldSeal } from './flow.js';
+import { createWallet } from './economy.js';
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
@@ -185,6 +186,46 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
     const dy = Math.abs(seg[i][1] - seg[i - 1][1]);
     assert.ok(dx <= 1 && dy <= 1 && dx + dy > 0, `розрив на ${i}: ${seg[i - 1]} → ${seg[i]}`);
   }
+}
+
+// Чорнило: платимо рівно раз, повертаємо рівно половину, в мінус не йдемо
+{
+  const w = createWallet({ start: 120, costs: { wall: 5, magic_tower: 60, cannon: 100 }, refund: 0.5 });
+  assert.equal(w.ink, 120);
+  assert.equal(w.can('cannon'), true);
+
+  assert.equal(w.spend('cannon'), true);
+  assert.equal(w.ink, 20);
+  assert.equal(w.can('cannon'), false);
+  assert.equal(w.spend('cannon'), false);
+  assert.equal(w.ink, 20, 'невдале списання не має чіпати баланс');
+
+  assert.equal(w.refund('cannon'), 50);
+  assert.equal(w.ink, 70);
+
+  // Стіна коштує 5 → повертається 2, а не 3: стирання не має бути доходом
+  assert.equal(w.spend('wall'), true);
+  assert.equal(w.refund('wall'), 2);
+  assert.equal(w.ink, 67);
+
+  // Цикл «поставив-стер» тільки зменшує запас
+  const before = w.ink;
+  for (let i = 0; i < 10; i++) { w.spend('wall'); w.refund('wall'); }
+  assert.ok(w.ink < before);
+
+  assert.equal(w.earn(8), 8);
+  assert.equal(w.ink, 45);
+
+  // Невідомий тип нічого не коштує і нічого не повертає
+  assert.equal(w.cost('нема'), 0);
+  assert.equal(w.spend('нема'), true);
+  assert.equal(w.ink, 45);
+
+  // Порожня ручка: найдешевше вже не по кишені
+  const empty = createWallet({ start: 0, costs: { wall: 5 }, refund: 0.5 });
+  assert.equal(empty.can('wall'), false);
+  assert.equal(empty.spend('wall'), false);
+  assert.equal(empty.ink, 0);
 }
 
 console.log('selfcheck: ok');

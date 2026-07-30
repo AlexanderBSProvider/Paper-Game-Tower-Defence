@@ -9,6 +9,7 @@ import { buildPath, posAt } from './pathmath.js';
 import { createGrid, WALL, TOWER, DECOR, BASE } from './grid.js';
 import { computeFlow, routeFrom, stepFrom, reaches, wouldSeal } from './flow.js';
 import { buildRig } from './rig.js';
+import { createWallet } from './economy.js';
 
 const PEN = { jitter: 0.035, step: 0.28, overshoot: 0.07 };
 
@@ -55,6 +56,11 @@ function drawWall(g, cx, cy, look) {
 
 export function createGame({ world, look, level, balance, rigDefs, parts, textures, layout }) {
   const grid = createGrid(look.core.cols, look.core.rows);
+  const wallet = createWallet({
+    start: balance.economy.startInk,
+    costs: balance.build,
+    refund: balance.economy.refund,
+  });
 
   const routeG = new Graphics();
   const wallLayer = new Container();
@@ -137,7 +143,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
   let flow = computeFlow(grid, goals);
 
   const enemies = [];
-  const state = { lives: level.lives, spawned: 0, leaked: 0, sealed: false };
+  const state = { lives: level.lives, maxLives: level.lives, spawned: 0, killed: 0, leaked: 0, sealed: false };
   let spawnTimer = 0;
 
   const cellOf = (e) => [Math.floor(e.x), Math.floor(e.y)];
@@ -158,6 +164,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
   function whyNot(kind, cx, cy) {
     const k = KINDS[kind];
     if (!k) return 'невідомий тип';
+    if (!wallet.can(kind)) return 'мало чорнила';
     if (!grid.isFree(cx, cy, k.w, k.h)) return 'зайнято';
     const cells = grid.rect(cx, cy, k.w, k.h);
     const occupied = new Set(enemyCells().map(([x, y]) => `${x},${y}`));
@@ -171,6 +178,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
     if (reason) return { ok: false, reason };
 
     const k = KINDS[kind];
+    wallet.spend(kind);
     const id = nextId++;
     grid.fill(cx, cy, k.w, k.h, k.mark, id);
 
@@ -201,8 +209,9 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
     if (item.rig) unplace(item.rig);
     if (item.gfx) item.gfx.destroy();
     smudge(item.cx, item.cy, k.w, k.h);
+    const back = wallet.refund(item.kind);
     refresh();
-    return { ok: true, kind: item.kind };
+    return { ok: true, kind: item.kind, refund: back };
   }
 
   // --- вороги ---------------------------------------------------------------
@@ -218,6 +227,17 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
   function despawn(e) {
     unplace(e.rig);
     enemies.splice(enemies.indexOf(e), 1);
+  }
+
+  /** Шкода ворогу. Вбитий доливає чорнила в ручку — це єдиний дохід у грі.
+   *  Візуал смерті (закреслення) — крок 7, поки просто зникає. */
+  function damage(e, amount) {
+    e.hp -= amount;
+    if (e.hp > 0) { e.rig.fire('hit'); return false; }
+    wallet.earn(e.def.bounty);
+    state.killed++;
+    despawn(e);
+    return true;
   }
 
   function advance(e, step) {
@@ -282,7 +302,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
   refresh();
 
   return {
-    state, grid, enemies, entry, goals, update, rescale, spawnEnemy,
+    state, wallet, grid, enemies, entry, goals, update, rescale, spawnEnemy, damage,
     build, erase, whyNot, get flow() { return flow; },
   };
 }
