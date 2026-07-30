@@ -7,7 +7,7 @@
 //   4. перехльости — рука не спиняється точно в куті, лінія вибігає за нього;
 //   5. multiply — чорнило затемнює папір, а не перекриває його (ставиться на контейнер).
 
-import { Graphics, Sprite, Texture, DisplacementFilter } from '../lib/pixi.min.mjs';
+import { AlphaFilter, Container, Graphics, Sprite, Texture, DisplacementFilter } from '../lib/pixi.min.mjs';
 
 const TAU = Math.PI * 2;
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -210,9 +210,28 @@ export function createBoil(look) {
   };
 }
 
-/** Порожній Graphics із правильним блендом — усе чорнило створюється так. */
+/**
+ * Контейнер, у якому живе все чорнило. Діти малюються звичайним блендом у власний
+ * буфер (його дає фільтр), і вже готовий шар один раз множиться на папір.
+ *
+ * Ізоляція тут не оптимізація, а умова коректного кольору. Якщо повісити multiply
+ * на самі Graphics, штрих множиться сам із собою: `ribbon` кладе кожен сегмент
+ * окремим stroke, круглі торці сусідів перекриваються, зверху йде ще й ореол —
+ * за 8-10 накладань будь-яка ручка сідає в чорний і синє від червоного не
+ * відрізнити. Один множник на весь шар лишає колір таким, яким його задано.
+ *
+ * @param {Filter[]} filters — фільтри шару (напр. boil). Множить на папір останній,
+ *   бо саме він малює результат у ціль; якщо фільтрів немає, беремо порожній.
+ */
+export function inkContainer(filters = []) {
+  const c = new Container();
+  const list = filters.length ? filters : [new AlphaFilter()];
+  list[list.length - 1].blendMode = 'multiply';
+  c.filters = list;
+  return c;
+}
+
+/** Порожній Graphics для чорнила. Бленд не чіпаємо — його дає inkContainer. */
 export function inkLayer() {
-  const g = new Graphics();
-  g.blendMode = 'multiply';
-  return g;
+  return new Graphics();
 }

@@ -2,9 +2,9 @@
 // вписується в екран цілком (contain), а папір заливає весь екран — тому в
 // ландшафті поле стоїть колонкою посередині, а по боках лишається зошит із полями.
 
-import { Application, Container, Graphics } from '../lib/pixi.min.mjs';
+import { Application, Graphics } from '../lib/pixi.min.mjs';
 import { createPaper } from './paper.js';
-import { createBoil, inkLayer, penStroke, penCircle, penRect, hatch, scribble } from './ink.js';
+import { createBoil, inkContainer, inkLayer, penStroke, penCircle, penRect, hatch, scribble } from './ink.js';
 
 const look = await (await fetch('./data/look.json')).json();
 
@@ -20,12 +20,12 @@ document.getElementById('app').appendChild(app.canvas);
 
 const layout = { w: 0, h: 0, scale: 1, cell: look.grid.cell, ox: 0, oy: 0 };
 const paper = createPaper(app, look);
-const world = new Container(); // чорнило в проєктних одиницях
-const hud = new Container();   // нотатки на полях, екранні одиниці
 
 // Boil тремтить лише чорнилом: якщо накрити ним папір — попливе клітинка.
 const boil = createBoil(look);
-world.filters = [boil.filter];
+
+const world = inkContainer([boil.filter]); // чорнило в проєктних одиницях
+const hud = inkContainer();                // нотатки на полях, екранні одиниці
 
 app.stage.addChild(paper.base, world, paper.overlay, hud, boil.sprite);
 
