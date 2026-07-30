@@ -4,6 +4,8 @@
 
 import assert from 'node:assert/strict';
 import { buildPath, posAt, distToPath } from './pathmath.js';
+import { createGrid, WALL, BASE } from './grid.js';
+import { computeFlow, reaches, stepFrom, routeFrom, simplify, wouldSeal } from './flow.js';
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
@@ -64,5 +66,107 @@ near(z.length, 3);
 near(posAt(z, 1.5).y, 2.5);
 
 assert.throws(() => buildPath([[2, 2], [2, 2]]), /порожня/);
+
+// --- сітка й маршрут -------------------------------------------------------
+
+// Поле 5x6, база внизу по центру, вхід угорі по центру.
+const mkGrid = () => {
+  const g = createGrid(5, 6);
+  g.fill(2, 5, 1, 1, BASE);
+  return g;
+};
+const GOALS = [[2, 5]];
+const ENTRY = [2, 0];
+
+{
+  const g = mkGrid();
+  const f = computeFlow(g, GOALS);
+  // Порожнє поле: рівно 5 кроків згори вниз
+  assert.equal(f.dist[0 * 5 + 2], 5);
+  assert.ok(reaches(f, ...ENTRY));
+  // Кожен крок наближає до бази рівно на одиницю
+  let [x, y] = ENTRY, steps = 0;
+  while (true) {
+    const s = stepFrom(f, x, y);
+    if (!s) break;
+    assert.equal(f.dist[y * 5 + x] - f.dist[s[1] * 5 + s[0]], 1);
+    [x, y] = s; steps++;
+    assert.ok(steps <= 30, 'маршрут зациклився');
+  }
+  assert.deepEqual([x, y], [2, 5]);
+  assert.equal(steps, 5);
+}
+
+{
+  // Стіна на прямій змушує обійти: шлях довшає рівно на 2
+  const g = mkGrid();
+  g.fill(2, 2, 1, 1, WALL);
+  const f = computeFlow(g, GOALS);
+  assert.equal(f.dist[0 * 5 + 2], 7);
+  assert.ok(reaches(f, ...ENTRY));
+  // Клітинка під стіною недосяжна для напрямку, але сама стіна — не маршрут
+  assert.equal(f.dist[2 * 5 + 2], -1);
+  assert.equal(stepFrom(f, 2, 2), null);
+}
+
+{
+  // Повний паркан упоперек відрізає вхід
+  const g = mkGrid();
+  for (let x = 0; x < 5; x++) g.fill(x, 3, 1, 1, WALL);
+  const f = computeFlow(g, GOALS);
+  assert.equal(reaches(f, ...ENTRY), false);
+}
+
+{
+  // wouldSeal ловить саме останню клітинку паркану, а не передостанню
+  const g = mkGrid();
+  for (let x = 0; x < 4; x++) g.fill(x, 3, 1, 1, WALL);
+  assert.equal(wouldSeal(g, GOALS, [[4, 3]], [ENTRY]), true);
+  // (4,4) теж замуровує: єдиний прохід — через (4,3), а далі глухий кут
+  assert.equal(wouldSeal(g, GOALS, [[4, 4]], [ENTRY]), true);
+  assert.equal(wouldSeal(g, GOALS, [[0, 1]], [ENTRY]), false);
+  // перевірка не має лишати слідів у сітці
+  assert.equal(g.at(4, 3), 0);
+  assert.equal(g.at(4, 4), 0);
+  assert.equal(g.at(0, 1), 0);
+  // замурувати ворога — так само заборонено
+  assert.equal(wouldSeal(g, GOALS, [[4, 3]], [[4, 2]]), true);
+}
+
+{
+  // Башта 2x2 як стіна: перевіряємо цілим прямокутником
+  const g = mkGrid();
+  g.fill(0, 3, 1, 1, WALL);
+  g.fill(4, 3, 1, 1, WALL);
+  assert.equal(g.isFree(1, 3, 2, 2), true);
+  assert.equal(wouldSeal(g, GOALS, g.rect(1, 3, 2, 2), [ENTRY]), false);
+  assert.equal(wouldSeal(g, GOALS, g.rect(1, 3, 3, 1), [ENTRY]), true);
+}
+
+{
+  // Маршрут для малювання: центри клітинок, прямі ділянки склеєні
+  const g = mkGrid();
+  const f = computeFlow(g, GOALS);
+  const pts = routeFrom(f, ...ENTRY);
+  assert.deepEqual(pts[0], [2.5, 0.5]);
+  assert.deepEqual(pts[pts.length - 1], [2.5, 5.5]);
+  assert.equal(pts.length, 2, 'пряма має склеїтись в один сегмент');
+  near(buildPath(pts).length, 5);
+}
+
+assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1, 2]]);
+
+// Зайнятість і стирання
+{
+  const g = createGrid(4, 4);
+  g.fill(1, 1, 2, 2, WALL, 7);
+  assert.equal(g.isFree(1, 1), false);
+  assert.equal(g.isFree(0, 0, 2, 2), false); // перетинається з зайнятим
+  assert.equal(g.isFree(3, 3), true);
+  assert.equal(g.isFree(3, 3, 2, 1), false); // виліт за межі
+  assert.equal(g.ownerAt(2, 2), 7);
+  assert.deepEqual(g.clearOwner(7).length, 4);
+  assert.equal(g.isFree(1, 1, 2, 2), true);
+}
 
 console.log('selfcheck: ok');
