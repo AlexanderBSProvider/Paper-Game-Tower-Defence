@@ -75,8 +75,11 @@ app.ticker.add(({ deltaMS }) => {
 });
 
 // ?ink=1 — стенд для примітивів пера (крок 2). Піде геть, коли з'явиться procart.
-if (new URLSearchParams(location.search).has('ink')) {
+// ?ink=2 — той самий стенд, збільшений, щоб розглядати лінію зблизька.
+const inkParam = new URLSearchParams(location.search).get('ink');
+if (inkParam) {
   const g = inkLayer();
+  g.scale.set(Number(inkParam) || 1);
   const pen = look.pens.blue;
   penRect(g, 40, 60, 130, 90, { color: pen, width: 2.4 });
   penCircle(g, 265, 105, 52, { color: pen, width: 2.4 });
