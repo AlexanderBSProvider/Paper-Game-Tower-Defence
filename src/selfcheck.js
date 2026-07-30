@@ -4,7 +4,7 @@
 
 import assert from 'node:assert/strict';
 import { buildPath, posAt, distToPath } from './pathmath.js';
-import { createGrid, WALL, BASE } from './grid.js';
+import { createGrid, lineCells, WALL, BASE } from './grid.js';
 import { computeFlow, reaches, stepFrom, routeFrom, simplify, wouldSeal } from './flow.js';
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
@@ -167,6 +167,24 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
   assert.equal(g.ownerAt(2, 2), 7);
   assert.deepEqual(g.clearOwner(7).length, 4);
   assert.equal(g.isFree(1, 1, 2, 2), true);
+}
+
+// Риска під пальцем: між рідкими подіями вказівника не має бути дірок
+{
+  assert.deepEqual(lineCells(2, 3, 2, 3), [[2, 3]]);
+  assert.deepEqual(lineCells(0, 0, 3, 0), [[0, 0], [1, 0], [2, 0], [3, 0]]);
+  assert.deepEqual(lineCells(0, 0, 0, -2), [[0, 0], [0, -1], [0, -2]]);
+  assert.deepEqual(lineCells(0, 0, 2, 2), [[0, 0], [1, 1], [2, 2]]);
+
+  // Довільний відрізок: кінці на місці, сусідні клітинки дотикаються
+  const seg = lineCells(1, 2, 9, 7);
+  assert.deepEqual(seg[0], [1, 2]);
+  assert.deepEqual(seg[seg.length - 1], [9, 7]);
+  for (let i = 1; i < seg.length; i++) {
+    const dx = Math.abs(seg[i][0] - seg[i - 1][0]);
+    const dy = Math.abs(seg[i][1] - seg[i - 1][1]);
+    assert.ok(dx <= 1 && dy <= 1 && dx + dy > 0, `розрив на ${i}: ${seg[i - 1]} → ${seg[i]}`);
+  }
 }
 
 console.log('selfcheck: ok');

@@ -14,6 +14,7 @@ import { createPaper } from './paper.js';
 import { createBoil, inkContainer } from './ink.js';
 import { bakeParts } from './procart.js';
 import { createGame } from './game.js';
+import { createTools } from './tools.js';
 
 const [look, parts, rigDefs, level, balance] = await Promise.all([
   fetch('./data/look.json').then((r) => r.json()),
@@ -53,6 +54,7 @@ app.stage.addChild(paper.base, world, paper.overlay, hud, boil.sprite);
 
 const textures = bakeParts(app.renderer, parts, look);
 const game = createGame({ world, look, level, balance, rigDefs, parts, textures, layout });
+const tools = createTools({ app, canvas: app.canvas, world, layout, game, look, balance });
 
 const debug = new URLSearchParams(location.search).has('debug');
 const debugRect = new Graphics();
@@ -107,4 +109,4 @@ systems.push((dt) => game.update(dt));
 relayout();
 app.renderer.on('resize', relayout);
 
-window.__td = { app, look, layout, world, hud, paper, state, systems, game, textures };
+window.__td = { app, look, layout, world, hud, paper, state, systems, game, tools, textures };

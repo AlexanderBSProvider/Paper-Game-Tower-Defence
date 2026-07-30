@@ -12,10 +12,10 @@ import { buildRig } from './rig.js';
 
 const PEN = { jitter: 0.035, step: 0.28, overshoot: 0.07 };
 
-const KINDS = {
-  wall: { w: 1, h: 1, mark: WALL, rig: null },
-  magic_tower: { w: 2, h: 2, mark: TOWER, rig: 'magic_tower' },
-  cannon: { w: 2, h: 2, mark: TOWER, rig: 'cannon' },
+export const KINDS = {
+  wall: { w: 1, h: 1, mark: WALL, rig: null, drawTime: 0.2 },
+  magic_tower: { w: 2, h: 2, mark: TOWER, rig: 'magic_tower', drawTime: 0.4 },
+  cannon: { w: 2, h: 2, mark: TOWER, rig: 'cannon', drawTime: 0.4 },
 };
 
 /** Маршрут пунктиром зі стрілками — як план, накреслений у зошиті. */
@@ -43,30 +43,30 @@ function drawRoute(g, pts, look) {
   }
 }
 
-/** Стіни — накреслені від руки квадрати зі штрихуванням. */
-function drawWalls(g, walls, look) {
-  g.clear();
-  // На 25 px клітинки все, що щільніше, зливається в суцільний брусок: обвід
-  // тонкий, штрихування рідке, ореол вимкнено.
-  for (const [cx, cy] of walls) {
-    penRect(g, cx + 0.13, cy + 0.13, 0.74, 0.74,
-      { ...PEN, color: look.pens.blue, width: 0.05, overshoot: 0.09, halo: 0.06 });
-    hatch(g, cx + 0.2, cy + 0.2, 0.6, 0.6,
-      { ...PEN, color: look.pens.blue, width: 0.035, alpha: 0.3, gap: 0.32, jitterGap: 0.2, halo: 0 });
-  }
+/** Стіна — накреслений від руки квадрат із однією діагоналлю.
+ *  Штрихування тут не працює: на 25 px клітинки сусідні стіни зливаються в
+ *  суцільний брусок, і лабіринт перестає читатись по клітинках. */
+function drawWall(g, cx, cy, look) {
+  penRect(g, cx + 0.15, cy + 0.15, 0.7, 0.7,
+    { ...PEN, color: look.pens.blue, width: 0.038, alpha: 0.72, overshoot: 0.06, halo: 0 });
+  penStroke(g, [[cx + 0.26, cy + 0.74], [cx + 0.74, cy + 0.26]],
+    { ...PEN, color: look.pens.blue, width: 0.03, alpha: 0.35, halo: 0 });
 }
 
 export function createGame({ world, look, level, balance, rigDefs, parts, textures, layout }) {
   const grid = createGrid(look.core.cols, look.core.rows);
 
   const routeG = new Graphics();
-  const wallsG = new Graphics();
+  const wallLayer = new Container();
+  const fxLayer = new Container();
   // Один шар на всіх, хто стоїть на землі: сортуємо за y, тому ближнє
   // перекриває дальнє само собою.
   const units = new Container();
-  world.addChild(routeG, wallsG, units);
+  world.addChild(routeG, wallLayer, fxLayer, units);
 
   const rigs = [];
+  const fx = [];
+
   function place(rigId, x, y) {
     const rig = buildRig(rigDefs[rigId], textures, parts, look);
     rig.view.position.set(x, y);
@@ -78,6 +78,44 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
   function unplace(rig) {
     rig.view.destroy({ children: true });
     rigs.splice(rigs.indexOf(rig), 1);
+  }
+
+  /** Витирання маскою: об'єкт не з'являється, а домальовується зліва направо. */
+  function wipeIn(target, parent, x, y, w, h, dur) {
+    const mask = new Graphics();
+    parent.addChild(mask);
+    target.mask = mask;
+    fx.push({
+      t: 0,
+      step(dt) {
+        this.t += dt;
+        const p = Math.min(1, this.t / dur);
+        mask.clear().rect(x - 0.1, y - 0.1, (w + 0.2) * p, h + 0.2).fill(0xffffff);
+        if (p < 1) return false;
+        target.mask = null;
+        mask.destroy();
+        return true;
+      },
+    });
+  }
+
+  /** Слід від ластика: бліда пляма, яка тане. */
+  function smudge(cx, cy, w, h) {
+    const g = new Graphics();
+    hatch(g, cx + 0.1, cy + 0.1, w - 0.2, h - 0.2,
+      { color: look.pens.pencil, width: 0.07, alpha: 0.22, gap: 0.26, jitterGap: 0.4, halo: 0, jitter: 0.06, step: 0.3 });
+    fxLayer.addChild(g);
+    fx.push({
+      t: 0,
+      step(dt) {
+        this.t += dt;
+        const p = this.t / 1.3;
+        g.alpha = Math.max(0, 1 - p);
+        if (p < 1) return false;
+        g.destroy();
+        return true;
+      },
+    });
   }
 
   // --- рівень ---------------------------------------------------------------
@@ -93,7 +131,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
   }
 
   const entry = level.entry;
-  const built = new Map(); // id → { kind, cx, cy, rig }
+  const built = new Map(); // id → { kind, cx, cy, rig, gfx }
   let nextId = 1;
 
   let flow = computeFlow(grid, goals);
@@ -109,7 +147,6 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
     flow = computeFlow(grid, goals);
     state.sealed = !reaches(flow, entry[0], entry[1]);
     drawRoute(routeG, routeFrom(flow, entry[0], entry[1]), look);
-    drawWalls(wallsG, [...built.values()].filter((b) => b.kind === 'wall').map((b) => [b.cx, b.cy]), look);
     // Ціль, що стала стіною, більше не ціль — переобираємо наступного кадру.
     for (const e of enemies) {
       if (e.tx != null && grid.blocked(Math.floor(e.tx), Math.floor(e.ty))) e.tx = null;
@@ -129,16 +166,27 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
     return null;
   }
 
-  function build(kind, cx, cy, silent = false) {
+  function build(kind, cx, cy, instant = false) {
     const reason = whyNot(kind, cx, cy);
     if (reason) return { ok: false, reason };
 
     const k = KINDS[kind];
     const id = nextId++;
     grid.fill(cx, cy, k.w, k.h, k.mark, id);
-    const rig = k.rig ? place(k.rig, cx + k.w / 2, cy + k.h / 2) : null;
-    built.set(id, { kind, cx, cy, rig });
-    if (!silent) refresh();
+
+    let rig = null, gfx = null;
+    if (k.rig) {
+      rig = place(k.rig, cx + k.w / 2, cy + k.h / 2);
+      if (!instant) wipeIn(rig.view, units, cx - k.w / 2, cy - k.h - 0.2, k.w * 2, k.h * 2, k.drawTime);
+    } else {
+      gfx = new Graphics();
+      drawWall(gfx, cx, cy, look);
+      wallLayer.addChild(gfx);
+      if (!instant) wipeIn(gfx, wallLayer, cx, cy, k.w, k.h, k.drawTime);
+    }
+
+    built.set(id, { kind, cx, cy, rig, gfx });
+    refresh();
     return { ok: true, id };
   }
 
@@ -146,9 +194,13 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
     const id = grid.ownerAt(cx, cy);
     const item = built.get(id);
     if (!item) return { ok: false, reason: 'нічого стирати' };
+
+    const k = KINDS[item.kind];
     grid.clearOwner(id);
     built.delete(id);
     if (item.rig) unplace(item.rig);
+    if (item.gfx) item.gfx.destroy();
+    smudge(item.cx, item.cy, k.w, k.h);
     refresh();
     return { ok: true, kind: item.kind };
   }
@@ -217,6 +269,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
       e.rig.moving = true;
     }
 
+    for (let i = fx.length - 1; i >= 0; i--) if (fx[i].step(dt)) fx.splice(i, 1);
     for (const r of rigs) r.update(dtMs);
     units.children.sort((a, b) => a.y - b.y);
   }
@@ -228,5 +281,8 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
   for (const [cx, cy] of level.startWalls ?? []) build('wall', cx, cy, true);
   refresh();
 
-  return { state, grid, enemies, entry, goals, update, rescale, spawnEnemy, build, erase, whyNot, get flow() { return flow; } };
+  return {
+    state, grid, enemies, entry, goals, update, rescale, spawnEnemy,
+    build, erase, whyNot, get flow() { return flow; },
+  };
 }
