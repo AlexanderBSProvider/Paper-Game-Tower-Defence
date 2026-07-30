@@ -4,6 +4,7 @@
 
 import { Application, Container, Graphics } from '../lib/pixi.min.mjs';
 import { createPaper } from './paper.js';
+import { createBoil, inkLayer, penStroke, penCircle, penRect, hatch, scribble } from './ink.js';
 
 const look = await (await fetch('./data/look.json')).json();
 
@@ -22,7 +23,11 @@ const paper = createPaper(app, look);
 const world = new Container(); // чорнило в проєктних одиницях
 const hud = new Container();   // нотатки на полях, екранні одиниці
 
-app.stage.addChild(paper.base, world, paper.overlay, hud);
+// Boil тремтить лише чорнилом: якщо накрити ним папір — попливе клітинка.
+const boil = createBoil(look);
+world.filters = [boil.filter];
+
+app.stage.addChild(paper.base, world, paper.overlay, hud, boil.sprite);
 
 const debug = new URLSearchParams(location.search).has('debug');
 const debugRect = new Graphics();
@@ -43,6 +48,7 @@ function relayout() {
   world.scale.set(layout.scale);
   world.position.set(layout.ox, layout.oy);
   paper.resize(layout);
+  boil.resize(w, h);
 
   if (debug) {
     debugRect.clear()
@@ -64,7 +70,24 @@ const systems = []; // (dtMs) => void, отримують 0 на паузі
 app.ticker.add(({ deltaMS }) => {
   const dt = state.paused ? 0 : deltaMS;
   paper.tick(deltaMS);
+  boil.tick(dt);
   for (const s of systems) s(dt);
 });
+
+// ?ink=1 — стенд для примітивів пера (крок 2). Піде геть, коли з'явиться procart.
+if (new URLSearchParams(location.search).has('ink')) {
+  const g = inkLayer();
+  const pen = look.pens.blue;
+  penRect(g, 40, 60, 130, 90, { color: pen, width: 2.4 });
+  penCircle(g, 265, 105, 52, { color: pen, width: 2.4 });
+  hatch(g, 40, 190, 130, 90, { color: pen, gap: 7 });
+  penCircle(g, 265, 235, 52, { color: pen, width: 2.4 });
+  hatch(g, 213, 183, 104, 104, { color: pen, gap: 6, angle: -0.5 });
+  penStroke(g, [[40, 330], [110, 300], [180, 360], [250, 305], [330, 345]], { color: pen, width: 3 });
+  penStroke(g, [[40, 400], [330, 400]], { color: look.pens.red, width: 2 });
+  penRect(g, 40, 430, 120, 80, { color: pen, width: 2.4 });
+  scribble(g, 40, 430, 120, 80, { color: look.pens.red });
+  world.addChild(g);
+}
 
 window.__td = { app, look, layout, world, hud, paper, state, systems };
