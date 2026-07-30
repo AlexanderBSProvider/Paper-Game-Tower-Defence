@@ -145,7 +145,9 @@ function paintGrid(w, h, dpr, layout, look) {
   // Червона лінія полів — там житиме HUD.
   if (look.margin.enabled) {
     g.strokeStyle = look.margin.color;
-    const mx = ox + look.margin.cols * cell;
+    // Лінія полів тримається лівого краю аркуша, а не ядра: у ландскейпі ядро
+    // стоїть посередині, і поля мусять лишитись полями.
+    const mx = ox + (k0 + look.margin.cols) * cell;
     for (const dx of [0, 2.5 * dpr]) {
       g.globalAlpha = look.margin.alpha * rnd(0.8, 1.05);
       g.lineWidth = 1.1 * dpr;

@@ -1,12 +1,25 @@
-// Boot. Розкладка: світ живе у фіксованих проєктних одиницях (cols×rows клітинок),
-// вписується в екран цілком (contain), а папір заливає весь екран — тому в
-// ландшафті поле стоїть колонкою посередині, а по боках лишається зошит із полями.
+// Boot і розкладка.
+//
+// Одиниця світу = одна клітинка зошита. Уся механіка (траса, радіуси, швидкості)
+// живе в клітинках, тому геймплей однаковий на будь-якому екрані.
+//
+// Ядро core.cols × core.rows видно завжди: клітинка = min(W/cols, H/rows).
+// Земля просто продовжується за ядро й заповнює екран — летербоксу немає, у
+// ландскейпі по боках виходять широкі газони, на яких теж можна будувати.
+// Малюнок персонажа при дрібній клітинці масштабується окремо від хітбокса,
+// щоб морди читалися й на вузькому екрані.
 
 import { Application, Graphics } from '../lib/pixi.min.mjs';
 import { createPaper } from './paper.js';
-import { createBoil, inkContainer, inkLayer, penStroke, penCircle, penRect, hatch, scribble } from './ink.js';
+import { createBoil, inkContainer } from './ink.js';
+import { bakeParts } from './procart.js';
+import { buildRig } from './rig.js';
 
-const look = await (await fetch('./data/look.json')).json();
+const [look, parts, rigDefs] = await Promise.all([
+  fetch('./data/look.json').then((r) => r.json()),
+  fetch('./data/parts.json').then((r) => r.json()),
+  fetch('./data/rigs.json').then((r) => r.json()),
+]);
 
 const app = new Application();
 await app.init({
@@ -18,16 +31,35 @@ await app.init({
 });
 document.getElementById('app').appendChild(app.canvas);
 
-const layout = { w: 0, h: 0, scale: 1, cell: look.grid.cell, ox: 0, oy: 0 };
+const layout = {
+  w: 0, h: 0,
+  cell: look.sprite.refCell, // px на клітинку
+  ox: 0, oy: 0,              // екранні координати клітинки (0,0) ядра
+  spriteScale: 1,
+  land: { x0: 0, y0: 0, x1: 0, y1: 0 }, // межі землі в клітинках
+};
+
 const paper = createPaper(app, look);
 
 // Boil тремтить лише чорнилом: якщо накрити ним папір — попливе клітинка.
 const boil = createBoil(look);
 
-const world = inkContainer([boil.filter]); // чорнило в проєктних одиницях
-const hud = inkContainer();                // нотатки на полях, екранні одиниці
+const world = inkContainer([boil.filter]); // чорнило, одиниця = клітинка
+const hud = inkContainer();                // нотатки на полях, екранні пікселі
 
 app.stage.addChild(paper.base, world, paper.overlay, hud, boil.sprite);
+
+const textures = bakeParts(app.renderer, parts, look);
+const actors = [];
+
+function spawn(rigId, x, y) {
+  const rig = buildRig(rigDefs[rigId], textures, parts, look);
+  rig.view.position.set(x, y);
+  rig.setScale(layout.spriteScale);
+  world.addChild(rig.view);
+  actors.push(rig);
+  return rig;
+}
 
 const debug = new URLSearchParams(location.search).has('debug');
 const debugRect = new Graphics();
@@ -35,30 +67,33 @@ if (debug) world.addChild(debugRect);
 
 function relayout() {
   const w = app.screen.width, h = app.screen.height;
-  const worldW = look.world.cols * look.grid.cell;
-  const worldH = look.world.rows * look.grid.cell;
+  const { cols, rows } = look.core;
+
+  const cell = Math.min(w / cols, h / rows);
+  const ox = Math.round((w - cols * cell) / 2);
+  const oy = Math.round((h - rows * cell) / 2);
 
   layout.w = w;
   layout.h = h;
-  layout.scale = Math.min(w / worldW, h / worldH);
-  layout.cell = look.grid.cell * layout.scale;
-  layout.ox = Math.round((w - worldW * layout.scale) / 2);
-  layout.oy = Math.round((h - worldH * layout.scale) / 2);
+  layout.cell = cell;
+  layout.ox = ox;
+  layout.oy = oy;
+  // Дрібна клітинка — малюнок більший за хітбокс, інакше морди зникають.
+  layout.spriteScale = Math.min(look.sprite.maxScale, Math.max(1, look.sprite.refCell / cell));
+  layout.land = { x0: -ox / cell, y0: -oy / cell, x1: cols + ox / cell, y1: rows + oy / cell };
 
-  world.scale.set(layout.scale);
-  world.position.set(layout.ox, layout.oy);
+  world.scale.set(cell);
+  world.position.set(ox, oy);
   paper.resize(layout);
   boil.resize(w, h);
+  for (const a of actors) a.setScale(layout.spriteScale);
 
   if (debug) {
     debugRect.clear()
-      .rect(0, 0, worldW, worldH)
-      .stroke({ width: 2 / layout.scale, color: 0xff00ff, alpha: 0.5 });
+      .rect(0, 0, cols, rows)
+      .stroke({ width: 2 / cell, color: 0xff00ff, alpha: 0.45 });
   }
 }
-
-relayout();
-app.renderer.on('resize', relayout);
 
 // Пауза, коли вкладку сховали (вимога Poki та CrazyGames), зупиняє ЛОГІКУ, а не
 // рендер: якщо гасити тікер, у канвасі лишається мертвий кадр.
@@ -74,23 +109,26 @@ app.ticker.add(({ deltaMS }) => {
   for (const s of systems) s(dt);
 });
 
-// ?ink=1 — стенд для примітивів пера (крок 2). Піде геть, коли з'явиться procart.
-// ?ink=2 — той самий стенд, збільшений, щоб розглядати лінію зблизька.
-const inkParam = new URLSearchParams(location.search).get('ink');
-if (inkParam) {
-  const g = inkLayer();
-  g.scale.set(Number(inkParam) || 1);
-  const pen = look.pens.blue;
-  penRect(g, 40, 60, 130, 90, { color: pen, width: 2.4 });
-  penCircle(g, 265, 105, 52, { color: pen, width: 2.4 });
-  hatch(g, 40, 190, 130, 90, { color: pen, gap: 7 });
-  penCircle(g, 265, 235, 52, { color: pen, width: 2.4 });
-  hatch(g, 213, 183, 104, 104, { color: pen, gap: 6, angle: -0.5 });
-  penStroke(g, [[40, 330], [110, 300], [180, 360], [250, 305], [330, 345]], { color: pen, width: 3 });
-  penStroke(g, [[40, 400], [330, 400]], { color: look.pens.red, width: 2 });
-  penRect(g, 40, 430, 120, 80, { color: pen, width: 2.4 });
-  scribble(g, 40, 430, 120, 80, { color: look.pens.red });
-  world.addChild(g);
+systems.push((dt) => { for (const a of actors) a.update(dt); });
+
+// --- сцена кроку 3: персонажі просто стоять і дихають ----------------------
+// Порядок спавну = порядок відмальовки, тому спершу далеке, потім близьке.
+for (const [x, y] of [[1.2, 3.4], [13.6, 5.1], [0.9, 12.8], [14.1, 15.6], [2.1, 21.4], [12.9, 22.8]]) {
+  spawn('tree', x, y);
+}
+for (const [x, y] of [[3.6, 2.2], [11.4, 9.4], [1.6, 17.2], [13.2, 19.1]]) {
+  spawn('bush', x, y);
 }
 
-window.__td = { app, look, layout, world, hud, paper, state, systems };
+spawn('earling', 5.0, 5.0);
+spawn('earling', 9.4, 7.6);
+spawn('earling', 7.2, 11.2);
+
+spawn('magic_tower', 4.4, 17.4);
+spawn('cannon', 10.6, 17.4);
+spawn('keep', 7.5, 23.4);
+
+relayout();
+app.renderer.on('resize', relayout);
+
+window.__td = { app, look, layout, world, hud, paper, state, systems, actors, textures, spawn };

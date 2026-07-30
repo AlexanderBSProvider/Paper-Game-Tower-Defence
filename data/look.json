@@ -1,5 +1,11 @@
 {
-  "world": { "cols": 15, "rows": 26 },
+  "core": { "cols": 15, "rows": 26 },
+
+  "sprite": {
+    "refCell": 25,
+    "maxScale": 1.8,
+    "supersample": 2
+  },
 
   "paper": {
     "base": "#f6f2e7",

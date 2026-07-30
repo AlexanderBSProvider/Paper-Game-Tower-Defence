@@ -1,0 +1,97 @@
+{
+  "_": "Риг = дерево частин. pos і anchors у клітинках, pivot — у частках текстури, pen — ручка з look.pens. parent — індекс у масиві parts. mods крутить rig.js: amp кутових у градусах, freq у герцах, phase у частках періоду.",
+
+  "earling": {
+    "hitbox": [1.5, 1.5],
+    "anchors": { "hit": [0, -0.75], "ground": [0, 0.6] },
+    "parts": [
+      {
+        "part": "earling/body", "pos": [0, 0.2], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.055, "freq": 1.15 },
+          { "type": "bob", "amp": 0.045, "freq": 1.15 }
+        ]
+      },
+      {
+        "part": "earling/head", "parent": 0, "pos": [0, -0.72], "pivot": [0.5, 0.92], "pen": "red",
+        "mods": [
+          { "type": "sway", "amp": 5.5, "freq": 0.53 },
+          { "type": "bob", "amp": 0.035, "freq": 1.15, "phase": 0.18 }
+        ]
+      },
+      {
+        "part": "earling/eyes", "parent": 1, "pos": [0, -0.42], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [{ "type": "blink", "every": 3.4, "hold": 0.1 }]
+      }
+    ]
+  },
+
+  "magic_tower": {
+    "hitbox": [2, 2],
+    "anchors": { "muzzle": [0.62, -1.5], "hit": [0, -0.6], "ground": [0, 0.9] },
+    "parts": [
+      {
+        "part": "magic/base", "pos": [0, 0.9], "pivot": [0.5, 1.0], "pen": "blue",
+        "mods": [{ "type": "squash", "amp": 0.018, "freq": 0.42 }]
+      },
+      {
+        "part": "magic/roof", "parent": 0, "pos": [0, -1.32], "pivot": [0.5, 1.0], "pen": "blue",
+        "mods": [{ "type": "sway", "amp": 2.6, "freq": 0.37 }]
+      },
+      {
+        "part": "magic/staff", "parent": 0, "pos": [0.55, -0.8], "pivot": [0.5, 0.92], "pen": "blue",
+        "mods": [
+          { "type": "sway", "amp": 7, "freq": 0.68 },
+          { "type": "swing", "amp": -38 }
+        ]
+      }
+    ]
+  },
+
+  "cannon": {
+    "hitbox": [2, 2],
+    "anchors": { "muzzle": [0.85, -0.78], "hit": [0, -0.45], "ground": [0, 0.9] },
+    "parts": [
+      {
+        "part": "cannon/base", "pos": [0, 0.9], "pivot": [0.5, 1.0], "pen": "blue",
+        "mods": [{ "type": "squash", "amp": 0.02, "freq": 0.5, "on": "attack" }]
+      },
+      {
+        "part": "cannon/barrel", "parent": 0, "pos": [0.05, -0.62], "pivot": [0.22, 0.5], "pen": "blue",
+        "mods": [
+          { "type": "sway", "amp": 3.2, "freq": 0.44 },
+          { "type": "recoil", "amp": 0.38, "dir": [-1, 0.35] }
+        ]
+      }
+    ]
+  },
+
+  "keep": {
+    "hitbox": [3, 2],
+    "anchors": { "hit": [0, -0.8] },
+    "parts": [
+      { "part": "keep/wall", "pos": [0, 1.0], "pivot": [0.5, 1.0], "pen": "blue" },
+      {
+        "part": "keep/flag", "parent": 0, "pos": [-0.95, -1.68], "pivot": [0.12, 1.0], "pen": "green",
+        "mods": [{ "type": "sway", "amp": 9, "freq": 0.8 }]
+      }
+    ]
+  },
+
+  "tree": {
+    "hitbox": [1, 1],
+    "parts": [
+      {
+        "part": "decor/tree", "pos": [0, 0.85], "pivot": [0.5, 1.0], "pen": "pencil",
+        "mods": [{ "type": "sway", "amp": 1.8, "freq": 0.28 }]
+      }
+    ]
+  },
+
+  "bush": {
+    "hitbox": [1, 1],
+    "parts": [
+      { "part": "decor/bush", "pos": [0, 0.32], "pivot": [0.5, 1.0], "pen": "pencil" }
+    ]
+  }
+}
