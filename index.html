@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<title>Monster Horde</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<style>
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#1b1917; }
+  body { touch-action:none; -webkit-tap-highlight-color:transparent; }
+  #app canvas { display:block; }
+</style>
+<!--
+  Платформний SDK підключається одним тегом; src/sdk.js сам визначає, який завантажено.
+  Poki:        <script src="https://game-cdn.poki.com/scripts/v2/poki-sdk.js"></script>
+  CrazyGames:  <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
+  Поки не підключено — шим працює в no-op режимі, зовнішніх запитів нуль.
+-->
+</head>
+<body>
+<div id="app"></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

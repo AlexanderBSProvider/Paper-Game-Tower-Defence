@@ -1,0 +1,42 @@
+{
+  "world": { "cols": 15, "rows": 26 },
+
+  "paper": {
+    "base": "#f6f2e7",
+    "blotchAlpha": 0.07,
+    "blotches": 9,
+    "grainAlpha": 0.055,
+    "grainFps": 12,
+    "spineSide": "left",
+    "spineAlpha": 0.11,
+    "curl": true
+  },
+
+  "grid": {
+    "cell": 25,
+    "color": "#a7bad6",
+    "alpha": 0.62,
+    "width": 1.0,
+    "wobble": 0.35,
+    "dropout": 0.006,
+    "fade": 0.22
+  },
+
+  "margin": {
+    "enabled": true,
+    "cols": 2,
+    "color": "#dd9a98",
+    "alpha": 0.55
+  },
+
+  "pens": {
+    "blue": "#2b3a8f",
+    "red": "#c0392b",
+    "green": "#2e7d5b",
+    "marker": "#ffe066",
+    "pencil": "#5a5a5a"
+  },
+
+  "boil": { "amplitude": 1.8, "fps": 12 },
+  "vignette": 0.2
+}
