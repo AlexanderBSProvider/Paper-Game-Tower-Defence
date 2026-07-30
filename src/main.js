@@ -13,12 +13,14 @@ import { Application, Graphics } from '../lib/pixi.min.mjs';
 import { createPaper } from './paper.js';
 import { createBoil, inkContainer } from './ink.js';
 import { bakeParts } from './procart.js';
-import { buildRig } from './rig.js';
+import { createGame } from './game.js';
 
-const [look, parts, rigDefs] = await Promise.all([
+const [look, parts, rigDefs, level, balance] = await Promise.all([
   fetch('./data/look.json').then((r) => r.json()),
   fetch('./data/parts.json').then((r) => r.json()),
   fetch('./data/rigs.json').then((r) => r.json()),
+  fetch('./data/level.json').then((r) => r.json()),
+  fetch('./data/balance.json').then((r) => r.json()),
 ]);
 
 const app = new Application();
@@ -50,16 +52,7 @@ const hud = inkContainer();                // нотатки на полях, е
 app.stage.addChild(paper.base, world, paper.overlay, hud, boil.sprite);
 
 const textures = bakeParts(app.renderer, parts, look);
-const actors = [];
-
-function spawn(rigId, x, y) {
-  const rig = buildRig(rigDefs[rigId], textures, parts, look);
-  rig.view.position.set(x, y);
-  rig.setScale(layout.spriteScale);
-  world.addChild(rig.view);
-  actors.push(rig);
-  return rig;
-}
+const game = createGame({ world, look, level, balance, rigDefs, parts, textures, layout });
 
 const debug = new URLSearchParams(location.search).has('debug');
 const debugRect = new Graphics();
@@ -86,7 +79,7 @@ function relayout() {
   world.position.set(ox, oy);
   paper.resize(layout);
   boil.resize(w, h);
-  for (const a of actors) a.setScale(layout.spriteScale);
+  game.rescale(layout.spriteScale);
 
   if (debug) {
     debugRect.clear()
@@ -109,26 +102,9 @@ app.ticker.add(({ deltaMS }) => {
   for (const s of systems) s(dt);
 });
 
-systems.push((dt) => { for (const a of actors) a.update(dt); });
-
-// --- сцена кроку 3: персонажі просто стоять і дихають ----------------------
-// Порядок спавну = порядок відмальовки, тому спершу далеке, потім близьке.
-for (const [x, y] of [[1.2, 3.4], [13.6, 5.1], [0.9, 12.8], [14.1, 15.6], [2.1, 21.4], [12.9, 22.8]]) {
-  spawn('tree', x, y);
-}
-for (const [x, y] of [[3.6, 2.2], [11.4, 9.4], [1.6, 17.2], [13.2, 19.1]]) {
-  spawn('bush', x, y);
-}
-
-spawn('earling', 5.0, 5.0);
-spawn('earling', 9.4, 7.6);
-spawn('earling', 7.2, 11.2);
-
-spawn('magic_tower', 4.4, 17.4);
-spawn('cannon', 10.6, 17.4);
-spawn('keep', 7.5, 23.4);
+systems.push((dt) => game.update(dt));
 
 relayout();
 app.renderer.on('resize', relayout);
 
-window.__td = { app, look, layout, world, hud, paper, state, systems, actors, textures, spawn };
+window.__td = { app, look, layout, world, hud, paper, state, systems, game, textures };
