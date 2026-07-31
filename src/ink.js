@@ -64,10 +64,18 @@ function overshootEnds(pts, px) {
   return out;
 }
 
+// Нижня межа товщини — частка від заданої, а не абсолютне число. Абсолютне
+// писалось, коли перо жило тільки в пікселях, і мовчки ламало все, що малюється
+// в клітинках: там ширина лінії — це соті частки одиниці, тож поріг 0.35
+// підмінював будь-яку товщину на 0.35 клітинки. Маршрут, стіни й цифри від
+// цього ставали суцільними плямами. Сенс порогу — не дати натиску загнати
+// лінію в нуль, і для цього достатньо відносної межі.
+const MIN_W = 0.25;
+
 function ribbon(g, p, color, width, alpha, pressure) {
   const press = wobbler(1);
   for (let i = 1; i < p.length; i++) {
-    const w = Math.max(0.35, width * (1 + press(i * 0.55) * pressure));
+    const w = width * Math.max(MIN_W, 1 + press(i * 0.55) * pressure);
     g.moveTo(p[i - 1][0], p[i - 1][1]).lineTo(p[i][0], p[i][1]);
     g.stroke({ width: w, color, alpha, cap: 'round', join: 'round' });
   }
@@ -148,15 +156,18 @@ export function hatch(g, x, y, w, h, o = {}) {
   return g;
 }
 
-/** Закреслити — те, що робить рука, коли об'єкт більше не потрібен. Смерть ворога. */
+/** Закреслити — те, що робить рука, коли об'єкт більше не потрібен. Смерть ворога.
+ *  Розліт рядків задано часткою висоти: у клітинках абсолютні пікселі виносили
+ *  зигзаги на дві клітинки за межі того, що закреслюють. */
 export function scribble(g, x, y, w, h, o = {}) {
   const passes = o.passes ?? 2;
+  const rows = o.rows ?? 5;
   for (let p = 0; p < passes; p++) {
-    const rows = Math.max(3, Math.round(h / rnd(5, 9)));
     const pts = [];
     for (let i = 0; i <= rows; i++) {
       const t = i / rows;
-      pts.push([x + (i % 2 ? w * rnd(0.9, 1.08) : w * rnd(-0.08, 0.1)), y + h * t + rnd(-2, 2)]);
+      const drift = h * 0.05;
+      pts.push([x + (i % 2 ? w * rnd(0.9, 1.08) : w * rnd(-0.08, 0.1)), y + h * t + rnd(-drift, drift)]);
     }
     penStroke(g, pts, { width: 2.2, alpha: 0.85, jitter: 1.6, overshoot: 5, ...o });
   }

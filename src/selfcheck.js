@@ -5,8 +5,9 @@
 import assert from 'node:assert/strict';
 import { buildPath, posAt, distToPath } from './pathmath.js';
 import { createGrid, lineCells, WALL, BASE } from './grid.js';
-import { computeFlow, reaches, stepFrom, routeFrom, simplify, wouldSeal } from './flow.js';
+import { computeFlow, reaches, stepFrom, routeFrom, simplify, wouldSeal, distAt } from './flow.js';
 import { createWallet } from './economy.js';
+import { pickTarget, leadPoint, splashHits } from './combat.js';
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
@@ -226,6 +227,97 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
   assert.equal(empty.can('wall'), false);
   assert.equal(empty.spend('wall'), false);
   assert.equal(empty.ink, 0);
+}
+
+// --- бій -------------------------------------------------------------------
+
+// distAt каже те саме, що reaches, але числом і без -1 назовні
+{
+  const g = mkGrid();
+  const f = computeFlow(g, GOALS);
+  assert.equal(distAt(f, 2, 0), 5);
+  assert.equal(distAt(f, 2, 5), 0);
+  assert.equal(distAt(f, -1, 0), Infinity);   // поза полем
+  assert.equal(distAt(f, 0, 99), Infinity);
+  g.fill(1, 1, 1, 1, WALL);
+  assert.equal(distAt(computeFlow(g, GOALS), 1, 1), Infinity); // під стіною
+}
+
+// Ціль: не найближчий, а той, кому лишилось найменше до бази
+{
+  const rank = (e) => e.rank;
+  const far = { x: 0, y: 0, hp: 10, rank: 9 };   // поруч із баштою, але щойно зайшов
+  const near = { x: 2, y: 0, hp: 10, rank: 2 };  // далі, але майже дійшов
+  assert.equal(pickTarget(0, 0, 5, [far, near], rank), near);
+
+  // Поза радіусом не рахується, хоч би як близько був до бази
+  assert.equal(pickTarget(0, 0, 1.5, [far, near], rank), far);
+  assert.equal(pickTarget(0, 0, 5, [], rank), null);
+  assert.equal(pickTarget(9, 9, 1, [far, near], rank), null);
+
+  // Мертвих не добиваємо
+  assert.equal(pickTarget(0, 0, 5, [{ x: 0, y: 0, hp: 0, rank: 1 }], rank), null);
+
+  // Радіус включний: рівно на межі ще ціль
+  assert.ok(pickTarget(0, 0, 2, [{ x: 2, y: 0, hp: 1, rank: 1 }], rank));
+  assert.equal(pickTarget(0, 0, 2, [{ x: 2.001, y: 0, hp: 1, rank: 1 }], rank), null);
+
+  // Рівні за прогресом — б'ємо ближчого (коротший підліт)
+  const a = { x: 3, y: 0, hp: 1, rank: 4 };
+  const b = { x: 1, y: 0, hp: 1, rank: 4 };
+  assert.equal(pickTarget(0, 0, 5, [a, b], rank), b);
+
+  // Усі недосяжні (ще над полем) — ціль усе одно є, найближча
+  const u1 = { x: 4, y: 0, hp: 1, rank: Infinity };
+  const u2 = { x: 1, y: 0, hp: 1, rank: Infinity };
+  assert.equal(pickTarget(0, 0, 5, [u1, u2], rank), u2);
+}
+
+// Упередження: снаряд і ціль мають опинитись у точці зустрічі одночасно
+{
+  // Ціль іде вниз на 1/с, снаряд 2/с, старт у неї над головою на 2 клітинки
+  const m = leadPoint(0, 0, 0, 2, 0, 1, 2);
+  near(m.t, 2);          // 2 + 1*t = 2*t  →  t = 2
+  near(m.y, 4);
+  near(m.x, 0);
+
+  // Нерухома ціль — просто час прольоту
+  const still = leadPoint(0, 0, 3, 4, 0, 0, 5);
+  near(still.t, 1);
+  near(still.x, 3); near(still.y, 4);
+
+  // Загальний випадок: у точці зустрічі шляхи справді сходяться
+  for (const [tx, ty, vx, vy, sp] of [[5, 1, -1, 0.5, 4], [-3, 6, 1.5, -1, 6], [2, 2, 0, -1.5, 3]]) {
+    const r = leadPoint(0, 0, tx, ty, vx, vy, sp);
+    near(Math.hypot(r.x, r.y), sp * r.t, 1e-6); // снаряд встигає рівно за r.t
+    near(r.x, tx + vx * r.t, 1e-6);             // і ціль приходить туди ж
+    near(r.y, ty + vy * r.t, 1e-6);
+    assert.ok(r.t > 0, 'час зустрічі має бути в майбутньому');
+  }
+
+  // Ціль швидша за снаряд і тікає — зустрічі немає, б'ємо по поточній позиції
+  const escape = leadPoint(0, 0, 1, 0, 10, 0, 2);
+  near(escape.x, 1); near(escape.y, 0);
+  assert.ok(Number.isFinite(escape.t));
+
+  // Ціль тікає рівно зі швидкістю снаряда: вироджений випадок не дає NaN
+  const same = leadPoint(0, 0, 2, 0, 3, 0, 3);
+  assert.ok(Number.isFinite(same.x) && Number.isFinite(same.y));
+}
+
+// Сплеш
+{
+  const es = [
+    { x: 0, y: 0, hp: 5 },
+    { x: 1, y: 0, hp: 5 },
+    { x: 3, y: 0, hp: 5 },
+    { x: 0.5, y: 0, hp: 0 }, // вже закреслений
+  ];
+  assert.equal(splashHits(0, 0, 1.5, es).length, 2);
+  assert.equal(splashHits(0, 0, 0, es).length, 1);   // рівно в точці
+  assert.equal(splashHits(9, 9, 1, es).length, 0);
+  // Радіус включний
+  assert.equal(splashHits(0, 0, 1, es).length, 2);
 }
 
 console.log('selfcheck: ok');
