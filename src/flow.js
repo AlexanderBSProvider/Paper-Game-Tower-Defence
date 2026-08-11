@@ -52,6 +52,14 @@ export function reaches(flow, x, y) {
   return flow.dist[y * flow.cols + x] >= 0;
 }
 
+/** Скільки кроків звідси до бази. Поза полем і в глухому куті — Infinity,
+ *  щоб число можна було просто порівнювати, не переплітаючи з -1. */
+export function distAt(flow, x, y) {
+  if (x < 0 || y < 0 || x >= flow.cols || y >= flow.rows) return Infinity;
+  const d = flow.dist[y * flow.cols + x];
+  return d < 0 ? Infinity : d;
+}
+
 /** Наступна клітинка на шляху до бази, або null. */
 export function stepFrom(flow, x, y) {
   if (x < 0 || y < 0 || x >= flow.cols || y >= flow.rows) return null;
