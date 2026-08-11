@@ -151,6 +151,38 @@ const DOODLES = {
 };
 
 /**
+ * Деталі башт печуться прямо з контурів: гравець обводить рівно те, що потім
+ * стане на поле. Один набір ліній — одне джерело, тому малюнок і контур не
+ * можуть розійтись.
+ * @returns {Map<string, Texture>} id деталі → маска
+ */
+export function bakeCatalogue(renderer, catalogue, look) {
+  const px = look.sprite.refCell * look.sprite.supersample;
+  const out = new Map();
+
+  for (const [id, def] of Object.entries(catalogue)) {
+    if (id.startsWith('_') || !def.outline) continue;
+    const w = def.size[0] * px, h = def.size[1] * px;
+    const lw = Math.max(1.8, Math.min(w, h) * 0.075);
+    const g = new Graphics();
+
+    for (const s of def.outline) {
+      penStroke(g, s.map(([x, y]) => [x * w, y * h]), ink({
+        width: lw, jitter: lw * 0.45, step: Math.min(w, h) * 0.2,
+        // Перехльости малі: усе, що вилізе за коробку, обріже кадр текстури.
+        overshoot: lw * 0.7,
+      }));
+    }
+
+    out.set(id, renderer.generateTexture({
+      target: g, frame: new Rectangle(0, 0, w, h), antialias: true,
+    }));
+    g.destroy();
+  }
+  return out;
+}
+
+/**
  * Пече текстури всіх частин один раз на старті.
  * @returns {Map<string, Texture>} id частини → маска
  */

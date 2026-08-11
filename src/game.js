@@ -10,6 +10,7 @@ import { createGrid, WALL, TOWER, DECOR, BASE } from './grid.js';
 import { computeFlow, routeFrom, stepFrom, reaches, wouldSeal } from './flow.js';
 import { buildRig } from './rig.js';
 import { createWallet } from './economy.js';
+import { createCombat } from './combat.js';
 
 const PEN = { jitter: 0.035, step: 0.28, overshoot: 0.07 };
 
@@ -68,7 +69,9 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
   // Один шар на всіх, хто стоїть на землі: сортуємо за y, тому ближнє
   // перекриває дальнє само собою.
   const units = new Container();
-  world.addChild(routeG, wallLayer, fxLayer, units);
+  // Постріли й бризки — поверх усіх, хто стоїть на землі.
+  const shotLayer = new Container();
+  world.addChild(routeG, wallLayer, fxLayer, units, shotLayer);
 
   const rigs = [];
   const fx = [];
@@ -143,8 +146,13 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
   let flow = computeFlow(grid, goals);
 
   const enemies = [];
-  const state = { lives: level.lives, maxLives: level.lives, spawned: 0, killed: 0, leaked: 0, sealed: false };
-  let spawnTimer = 0;
+  // phase: 'break' — перерва перед хвилею, 'wave' — хвиля йде, далі 'won' | 'lost'.
+  const state = {
+    lives: level.lives, maxLives: level.lives,
+    wave: 0, waves: level.waves.length, phase: 'break', breakLeft: level.waveBreak ?? 5,
+    spawned: 0, killed: 0, leaked: 0, sealed: false,
+  };
+  let spawnTimer = 0, waveLeft = 0;
 
   const cellOf = (e) => [Math.floor(e.x), Math.floor(e.y)];
   const enemyCells = () => enemies.filter((e) => e.y >= 0).map(cellOf);
@@ -185,6 +193,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
     let rig = null, gfx = null;
     if (k.rig) {
       rig = place(k.rig, cx + k.w / 2, cy + k.h / 2);
+      combat.add(id, kind, rig, cx + k.w / 2, cy + k.h / 2);
       if (!instant) wipeIn(rig.view, units, cx - k.w / 2, cy - k.h - 0.2, k.w * 2, k.h * 2, k.drawTime);
     } else {
       gfx = new Graphics();
@@ -206,6 +215,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
     const k = KINDS[item.kind];
     grid.clearOwner(id);
     built.delete(id);
+    combat.remove(id);
     if (item.rig) unplace(item.rig);
     if (item.gfx) item.gfx.destroy();
     smudge(item.cx, item.cy, k.w, k.h);
@@ -215,10 +225,11 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
   }
 
   // --- вороги ---------------------------------------------------------------
-  function spawnEnemy(typeId = 'earling') {
+  /** @param {number} hpMul живучість хвилі: типів ворога поки один, росте він. */
+  function spawnEnemy(typeId = 'earling', hpMul = 1) {
     const def = balance.enemies[typeId];
     const rig = place(def.rig, entry[0] + 0.5, -1.6);
-    const e = { rig, def, hp: def.hp, x: entry[0] + 0.5, y: -1.6, tx: null, ty: null };
+    const e = { rig, def, hp: Math.round(def.hp * hpMul), x: entry[0] + 0.5, y: -1.6, tx: null, ty: null };
     enemies.push(e);
     state.spawned++;
     return e;
@@ -240,6 +251,18 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
     return true;
   }
 
+  /** Наскільки ворог просунувся: менше — ближче до бази. За полем, не за прямою. */
+  function distOf(e) {
+    const [cx, cy] = cellOf(e);
+    if (!grid.inside(cx, cy)) return Infinity; // ще в коридорі над полем
+    const d = flow.dist[cy * grid.cols + cx];
+    return d < 0 ? Infinity : d;
+  }
+
+  const combat = createCombat({
+    layer: shotLayer, look, balance, enemies, damage, distOf,
+  });
+
   function advance(e, step) {
     // Коридор над полем: спершу просто спускаємось до першого ряду.
     if (e.y < 0.5) {
@@ -252,6 +275,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
       state.leaked++;
       keep.fire('hit');
       despawn(e);
+      if (state.lives === 0) state.phase = 'lost';
       return;
     }
     if (e.tx == null) {
@@ -271,24 +295,54 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
     }
   }
 
+  /** Хвилі. Наступна починається не за таймером, а коли поле чисте: перерва —
+   *  це час домалювати лабіринт, і вкорочувати її автоматично нечесно. */
+  function updateWaves(dt) {
+    const w = level.waves[state.wave];
+
+    if (state.phase === 'break') {
+      state.breakLeft -= dt;
+      if (state.breakLeft > 0) return;
+      state.phase = 'wave';
+      waveLeft = w.count;
+      spawnTimer = 0;
+      return;
+    }
+
+    if (waveLeft > 0) {
+      spawnTimer -= dt;
+      if (spawnTimer > 0) return;
+      spawnEnemy(w.enemy ?? 'earling', w.hp ?? 1);
+      waveLeft--;
+      spawnTimer = w.every;
+      return;
+    }
+
+    if (enemies.length) return; // хвиля виспавнилась, але ще не зачищена
+    if (state.wave + 1 >= level.waves.length) { state.phase = 'won'; return; }
+    state.wave++;
+    state.phase = 'break';
+    state.breakLeft = level.waveBreak ?? 5;
+  }
+
   function update(dtMs) {
     const dt = dtMs / 1000;
+    const over = state.phase === 'won' || state.phase === 'lost';
 
-    if (state.spawned < level.spawn.count) {
-      spawnTimer += dt;
-      if (spawnTimer >= level.spawn.every) {
-        spawnTimer -= level.spawn.every;
-        spawnEnemy();
+    if (!over) {
+      updateWaves(dt);
+
+      for (const e of [...enemies]) {
+        advance(e, e.def.speed * dt);
+        if (!enemies.includes(e)) continue;
+        e.rig.view.position.set(e.x, e.y);
+        e.rig.moving = true;
       }
-    }
 
-    for (const e of [...enemies]) {
-      advance(e, e.def.speed * dt);
-      if (!enemies.includes(e)) continue;
-      e.rig.view.position.set(e.x, e.y);
-      e.rig.moving = true;
     }
+    combat.update(dt, !over);
 
+    // Ефекти й дихання рига йдуть навіть після кінця: аркуш не завмирає.
     for (let i = fx.length - 1; i >= 0; i--) if (fx[i].step(dt)) fx.splice(i, 1);
     for (const r of rigs) r.update(dtMs);
     units.children.sort((a, b) => a.y - b.y);
@@ -302,7 +356,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
   refresh();
 
   return {
-    state, wallet, grid, enemies, entry, goals, update, rescale, spawnEnemy, damage,
+    state, wallet, grid, enemies, entry, goals, update, rescale, spawnEnemy, damage, combat,
     build, erase, whyNot, get flow() { return flow; },
   };
 }

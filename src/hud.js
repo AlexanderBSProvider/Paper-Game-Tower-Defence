@@ -11,7 +11,7 @@
 // щокадру не можна: напис почне кипіти.
 
 import { Graphics } from '../lib/pixi.min.mjs';
-import { penStroke, penPath, penRect, penCircle, penText, textWidth, hatch } from './ink.js';
+import { penStroke, penPath, penRect, penCircle, penText, textWidth, hatch, scribble } from './ink.js';
 
 const SLOTS = ['ink', 'wall', 'magic_tower', 'cannon', 'eraser', 'lives'];
 const TOOLS = new Set(['wall', 'magic_tower', 'cannon', 'eraser']);
@@ -75,19 +75,24 @@ function tally(g, x, y, u, total, alive, look) {
   }
 }
 
-export function createHud({ hud, look, balance, game }) {
+export function createHud({ hud, look, balance, game, onRestart }) {
   const still = new Graphics();
   const live = new Graphics();
-  hud.addChild(still, live);
+  const over = new Graphics(); // фінальна записка поверх усього
+  hud.addChild(still, live, over);
 
   const slots = new Map(); // id → { x, y, w, h, u, gauge? }
   let u = 24;
   let tool = 'wall';
-  let shown = null; // останнє намальоване {ink, lives, tool}
+  let shown = null;   // останнє намальоване {ink, lives, tool, phase, wave}
+  let waveAt = null;  // де підписано номер хвилі
+  let L0 = null;      // остання розкладка — потрібна фінальній записці
+  let box = null;     // рамка фінальної записки, вона ж зона тапу
 
   const price = (id) => (id === 'eraser' ? '50%' : String(balance.build[id] ?? ''));
 
   function place(L) {
+    L0 = L;
     const n = SLOTS.length;
     const bottom = Math.max(L.oy, L.h * 0.1);
     const side = Math.max(L.ox, 0);
@@ -99,12 +104,15 @@ export function createHud({ hud, look, balance, game }) {
       const x = (side - bw) / 2;
       const y0 = (L.h - n * bh) / 2;
       SLOTS.forEach((id, i) => slots.set(id, { x, y: y0 + i * bh, w: bw, h: bh }));
+      // Лічильник хвиль — на протилежному полі, щоб не тіснити інструменти.
+      waveAt = { x: L.w - side / 2, y: L.h * 0.12 };
     } else {
       u = Math.min(64, bottom / 1.62, L.w / (1.25 * n));
       const bw = 1.2 * u, bh = 1.6 * u;
       const x0 = (L.w - n * bw) / 2;
       const y = L.h - bottom + (bottom - bh) / 2;
       SLOTS.forEach((id, i) => slots.set(id, { x: x0 + i * bw, y, w: bw, h: bh }));
+      waveAt = { x: L.w / 2, y: Math.max(bottom, L.oy) / 2 };
     }
   }
 
@@ -160,24 +168,92 @@ export function createHud({ hud, look, balance, game }) {
         .fill({ color: look.pens.marker, alpha: 0.6 });
     }
 
-    shown = { ink, lives: game.state.lives, tool };
+    // Номер хвилі — олівцем на протилежному полі.
+    if (waveAt) {
+      const size = u * 0.44;
+      const txt = `${Math.min(game.state.wave + 1, game.state.waves)}/${game.state.waves}`;
+      penText(live, txt, waveAt.x - textWidth(txt, size) / 2, waveAt.y - size / 2, size,
+        { color: look.pens.pencil, alpha: 0.7 });
+    }
+
+    shown = { ink, lives: game.state.lives, tool, phase: game.state.phase, wave: game.state.wave };
+  }
+
+  /** Кінець партії: записка поверх аркуша. Виграв — велика галочка, програв —
+   *  усе закреслено. Знизу — стрілка «ще раз»; тап будь-де починає заново. */
+  function drawEnd() {
+    over.clear();
+    box = null;
+    const st = game.state;
+    const win = st.phase === 'won';
+    if (!win && st.phase !== 'lost') return;
+
+    const W = L0.w, H = L0.h;
+    const s = Math.min(W, H) * 0.34;
+    const cx = W / 2, cy = H / 2 - s * 0.25;
+
+    // Шар множиться на папір, тож затемнити можна, освітлити — ні. Гасимо все
+    // навколо записки: суцільна заливка на весь екран не дала б контрасту.
+    const bx = cx - s * 0.78, by = cy - s * 0.62, bw = s * 1.56, bh = s * 1.95;
+    const dim = { color: 0x8f8875, alpha: 0.5 };
+    over.rect(0, 0, W, by).fill(dim);
+    over.rect(0, by + bh, W, H - by - bh).fill(dim);
+    over.rect(0, by, bx, bh).fill(dim);
+    over.rect(bx + bw, by, W - bx - bw, bh).fill(dim);
+    const pen = { width: s * 0.045, alpha: 0.9, jitter: s * 0.012, step: s * 0.12, overshoot: s * 0.03, halo: 0.15 };
+
+    penRect(over, bx, by, bw, bh, { ...pen, color: look.pens.pencil, alpha: 0.6, width: s * 0.022 });
+
+    if (win) {
+      penStroke(over, [[cx - s * 0.42, cy], [cx - s * 0.1, cy + s * 0.33], [cx + s * 0.46, cy - s * 0.4]],
+        { ...pen, color: look.pens.green, width: s * 0.085 });
+    } else {
+      scribble(over, cx - s * 0.45, cy - s * 0.4, s * 0.9, s * 0.78,
+        { color: look.pens.red, alpha: 0.85, passes: 3, halo: 0.12 });
+    }
+
+    const size = s * 0.3;
+    const txt = `${win ? st.waves : st.wave}/${st.waves}`;
+    penText(over, txt, cx - textWidth(txt, size) / 2, cy + s * 0.52, size,
+      { color: win ? look.pens.green : look.pens.red, alpha: 0.95, width: size * 0.14 });
+
+    // Кругова стрілка: розімкнене коло з двома рисочками на кінці.
+    const r = s * 0.2, ay = cy + s * 1.2, from = -2.2;
+    const pts = [];
+    for (let i = 0; i <= 24; i++) {
+      const a = from + (i / 24) * 5.1;
+      pts.push([cx + Math.cos(a) * r, ay + Math.sin(a) * r]);
+    }
+    penStroke(over, pts, { ...pen, color: look.pens.blue, width: s * 0.05, overshoot: 0 });
+    const hx = cx + Math.cos(from) * r, hy = ay + Math.sin(from) * r;
+    for (const d of [0.7, 2.3]) {
+      penStroke(over, [[hx, hy], [hx + Math.cos(from + d) * s * 0.13, hy + Math.sin(from + d) * s * 0.13]],
+        { ...pen, color: look.pens.blue, width: s * 0.045 });
+    }
+
+    box = { x: 0, y: 0, w: W, h: H }; // після кінця тап будь-де = ще раз
   }
 
   return {
-    resize(L) { place(L); drawStill(); drawLive(); },
+    resize(L) { place(L); drawStill(); drawLive(); drawEnd(); },
 
     /** Дешева перевірка щокадру: перемальовуємо лише коли число змінилось. */
     tick() {
       if (!shown) return;
-      if (shown.ink === game.wallet.ink && shown.lives === game.state.lives && shown.tool === tool) return;
+      const st = game.state;
+      if (shown.ink === game.wallet.ink && shown.lives === st.lives && shown.tool === tool
+        && shown.phase === st.phase && shown.wave === st.wave) return;
+      const phaseChanged = shown.phase !== st.phase;
       drawLive();
+      if (phaseChanged) drawEnd();
     },
 
     setTool(t) { tool = t; },
     get tool() { return tool; },
 
-    /** @returns {string|null} інструмент під пальцем, якщо тап потрапив у поля */
+    /** @returns {string|null} що під пальцем: інструмент, 'restart' або нічого */
     hit(px, py) {
+      if (box) { onRestart?.(); return 'restart'; }
       for (const id of TOOLS) {
         const s = slots.get(id);
         if (s && px >= s.x && px <= s.x + s.w && py >= s.y && py <= s.y + s.h) return id;

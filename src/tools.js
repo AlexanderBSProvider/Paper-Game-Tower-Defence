@@ -7,7 +7,7 @@ import { Graphics } from '../lib/pixi.min.mjs';
 import { KINDS } from './game.js';
 import { lineCells } from './grid.js';
 
-export function createTools({ app, canvas, world, layout, game, look, balance, hud }) {
+export function createTools({ app, canvas, world, layout, game, look, balance, hud, blocked }) {
   const ghost = new Graphics();
   world.addChild(ghost);
 
@@ -77,11 +77,13 @@ export function createTools({ app, canvas, world, layout, game, look, balance, h
   const size = () => (tool === 'eraser' ? [1, 1] : [KINDS[tool].w, KINDS[tool].h]);
 
   function onDown(ev) {
+    if (blocked?.()) return; // поки відкрита рамка обведення, поле не чіпаємо
     ev.preventDefault();
-    // Поля — не поле: тап по нотатках лише перемикає інструмент.
+    // Поля — не поле: тап по нотатках перемикає інструмент, а після кінця
+    // партії будь-який тап ловить фінальна записка.
     const picked = hud?.hit(...screenAt(ev));
-    if (picked) { setTool(picked); return; }
-    canvas.setPointerCapture?.(ev.pointerId);
+    if (picked) { if (KINDS[picked] || picked === 'eraser') setTool(picked); return; }
+    try { canvas.setPointerCapture?.(ev.pointerId); } catch { /* вказівник уже зник */ }
     drawing = true;
     strokeSeen.clear();
     hover = cellAt(ev, ...size());
@@ -91,6 +93,7 @@ export function createTools({ app, canvas, world, layout, game, look, balance, h
   }
 
   function onMove(ev) {
+    if (blocked?.()) return;
     hover = cellAt(ev, ...size());
     // Протягуванням малюємо лише те, що 1×1: стіни й стирання.
     if (drawing && (tool === 'eraser' || KINDS[tool].w === 1)) {

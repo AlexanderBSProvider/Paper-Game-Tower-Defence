@@ -7,6 +7,8 @@ import { buildPath, posAt, distToPath } from './pathmath.js';
 import { createGrid, lineCells, WALL, BASE } from './grid.js';
 import { computeFlow, reaches, stepFrom, routeFrom, simplify, wouldSeal } from './flow.js';
 import { createWallet } from './economy.js';
+import { makeTemplate, scoreTrace, magnetize, resample, nearestOn } from './trace.js';
+import { createBuild, qualityMul } from './build.js';
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
@@ -226,6 +228,252 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
   assert.equal(empty.can('wall'), false);
   assert.equal(empty.spend('wall'), false);
   assert.equal(empty.ink, 0);
+}
+
+// --- обведення -------------------------------------------------------------
+// Контур — горизонтальна риска, тому відхилення по y дорівнює відстані до
+// контуру, і всі числа можна перевіряти в лоб.
+{
+  const LINE = [[0.1, 0.5], [0.9, 0.5]];
+  const tpl = makeTemplate([LINE]);
+  near(tpl.length, 0.8, 1e-9);
+  assert.equal(tpl.nodes.length, 41); // 0.8 з кроком 0.02
+
+  const shift = (dy) => tpl.nodes.map(([x, y]) => [x, y + dy]);
+  const opts = { seconds: 1, tol: 0.08 };
+
+  // Ідеальне обведення
+  const perfect = scoreTrace(tpl, [shift(0)], opts);
+  near(perfect.accuracy, 1, 1e-6);
+  near(perfect.coverage, 1, 1e-9);
+  assert.equal(perfect.ok, true);
+  assert.ok(perfect.quality > 0.95, `ідеал дав ${perfect.quality}`);
+
+  // Напрямок і порядок штрихів не мають значення — рука сама вирішує
+  const back = scoreTrace(tpl, [shift(0).slice().reverse()], opts);
+  near(back.quality, perfect.quality, 1e-9);
+
+  // Зсув на половину допуску з'їдає рівно половину точності
+  const half = scoreTrace(tpl, [shift(0.04)], opts);
+  near(half.accuracy, 0.5, 1e-6);
+  near(half.coverage, 1, 1e-9);        // 0.04 < tol, вузли все ще пройдені
+  assert.ok(half.quality < perfect.quality);
+
+  // Зсув на цілий допуск: точності немає, але обведення зараховане
+  const edge = scoreTrace(tpl, [shift(0.08)], opts);
+  near(edge.accuracy, 0, 1e-6);
+  assert.equal(edge.ok, true);
+
+  // Обвів менше половини — не зараховано
+  const partial = scoreTrace(tpl, [[[0.1, 0.5], [0.4, 0.5]]], opts);
+  assert.ok(partial.coverage > 0.4 && partial.coverage < 0.55, `покриття ${partial.coverage}`);
+  assert.equal(partial.ok, false);
+  assert.ok(partial.accuracy > 0.99, 'по лінії вів точно, просто не до кінця');
+
+  // Ледь зараховане обведення не має отримувати бали за саме покриття
+  const barely = scoreTrace(tpl, [[[0.1, 0.58], [0.62, 0.58]]], opts);
+  assert.ok(barely.ok, `мало пройти поріг: ${barely.coverage}`);
+  assert.ok(barely.quality < 0.2, `ледь зараховане дало ${barely.quality}`);
+
+  // Частота подій вказівника не впливає: дві точки і сотня дають те саме
+  const sparse = scoreTrace(tpl, [[[0.1, 0.5], [0.9, 0.5]]], opts);
+  const dense = scoreTrace(tpl, [resample(LINE, 0.002)], opts);
+  near(sparse.accuracy, dense.accuracy, 1e-6);
+  near(sparse.coverage, dense.coverage, 1e-9);
+
+  // Зайві відриви пальця штрафуються
+  const chopped = scoreTrace(tpl, [
+    [[0.1, 0.5], [0.4, 0.5]], [[0.4, 0.5], [0.65, 0.5]], [[0.65, 0.5], [0.9, 0.5]],
+  ], opts);
+  assert.equal(chopped.extraLifts, 2);
+  assert.ok(chopped.quality < perfect.quality - 0.09, `штраф не спрацював: ${chopped.quality}`);
+
+  // Порожнє обведення нічого не коштує і нічого не дає
+  const empty = scoreTrace(tpl, [], opts);
+  assert.equal(empty.quality, 0);
+  assert.equal(empty.ok, false);
+
+  // Магніт: точка на відстані d лягає на d*(1-magnet) від контуру
+  const [m] = magnetize(tpl, [[0.5, 0.6]], 0.7);
+  near(m[0], 0.5, 1e-9);
+  near(m[1], 0.53, 1e-9);
+  near(nearestOn(tpl.segs, m[0], m[1]).d, 0.03, 1e-9);
+  // Крайні значення: 0 — чиста рука, 1 — чистий шаблон
+  near(magnetize(tpl, [[0.5, 0.6]], 0)[0][1], 0.6, 1e-9);
+  near(magnetize(tpl, [[0.5, 0.6]], 1)[0][1], 0.5, 1e-9);
+}
+
+// --- склад башти -----------------------------------------------------------
+{
+  const CAT = {
+    stump: {
+      art: 'proc:stump', size: [1.6, 1.0], cost: 25, tags: ['heavy'],
+      sockets: { top: [0, -1.0], left: [-0.8, -0.3], right: [0.8, -0.3] },
+    },
+    barrel: {
+      art: 'proc:barrel', size: [1.2, 0.5], cost: 30, tags: ['barrel'],
+      stats: { damage: 10 }, sockets: { tip: [0.6, -0.2] },
+    },
+    roof: { art: 'proc:roof', size: [1.4, 0.7], cost: 20, tags: ['round'], sockets: { top: [0, -0.7] } },
+    spike: { art: 'proc:spike', size: [0.5, 0.6], cost: 10, tags: ['sharp'], stats: { damage: 4 } },
+    spring: { art: 'proc:spring', size: [0.5, 0.6], cost: 15, tags: ['spring'] },
+  };
+  const CFG = {
+    base: { rate: 1, range: 2.4 },
+    combos: [{ id: 'ricochet', need: ['spring', 'barrel'], gives: { ricochet: 2 } }],
+  };
+  const mk = () => createBuild(CAT, CFG);
+
+  // Заготовка ставиться без сокета і рівно одна
+  {
+    const b = mk();
+    assert.equal(b.empty, true);
+    assert.equal(b.add('stump').ok, true);
+    assert.equal(b.add('stump').reason, 'заготовка вже є');
+    assert.equal(b.add('нема', null).reason, 'немає такої деталі');
+    assert.equal(b.empty, false);
+  }
+
+  // Місця кріплення: неіснуюче й зайняте
+  {
+    const b = mk();
+    const s = b.add('stump').id;
+    assert.equal(b.add('barrel', { node: s, name: 'нема' }).reason, 'немає такого місця');
+    assert.equal(b.add('barrel', { node: 99, name: 'top' }).reason, 'немає такої деталі в башті');
+    assert.equal(b.add('barrel', { node: s, name: 'top' }).ok, true);
+    assert.equal(b.add('roof', { node: s, name: 'top' }).reason, 'зайнято');
+    assert.equal(b.freeSockets().length, 3); // left, right у пенька + tip у ствола
+  }
+
+  // ГОЛОВНЕ: та сама деталь у різних місцях — різна башта
+  {
+    const high = mk();
+    const h = high.add('stump').id;
+    high.add('barrel', { node: h, name: 'top' });
+
+    const side = mk();
+    const s = side.add('stump').id;
+    side.add('barrel', { node: s, name: 'left' });
+
+    near(high.metrics().height, 1.5, 1e-9);
+    near(side.metrics().height, 1.0, 1e-9);
+    near(high.stats().range, 2.4 + 0.6 * 1.5 + 0.4 * (1.55 / 2.2), 1e-9);
+    assert.ok(high.stats().range > side.stats().range + 0.3,
+      `ствол угорі має бити далі: ${high.stats().range} проти ${side.stats().range}`);
+    // а ціна однакова — платиш за деталі, не за розум
+    assert.equal(high.stats().cost, side.stats().cost);
+  }
+
+  // Ціна — сума деталей; зняття забирає все, що трималось зверху
+  {
+    const b = mk();
+    const s = b.add('stump').id;
+    const bar = b.add('barrel', { node: s, name: 'top' }).id;
+    b.add('spike', { node: bar, name: 'tip' });
+    assert.equal(b.stats().cost, 65);
+
+    const gone = b.remove(bar);
+    assert.equal(gone.length, 2, 'ствол падає разом із шипом');
+    assert.equal(b.stats().cost, 25);
+    assert.equal(b.remove(999).length, 0);
+  }
+
+  // Комбо тільки коли обидві деталі на місці
+  {
+    const b = mk();
+    const s = b.add('stump').id;
+    b.add('barrel', { node: s, name: 'top' });
+    assert.deepEqual(b.stats().combos, []);
+    const sp = b.add('spring', { node: s, name: 'left' }).id;
+    assert.deepEqual(b.stats().combos, ['ricochet']);
+    assert.equal(b.stats().ricochet, 2);
+    b.remove(sp);
+    assert.deepEqual(b.stats().combos, []);
+    assert.equal(b.stats().ricochet, undefined);
+  }
+
+  // Симетрія: рівно складено — точніше б'є
+  {
+    const one = mk();
+    const a = one.add('stump').id;
+    one.add('spike', { node: a, name: 'left' });
+    near(one.stats().crit, 0.05, 1e-9);
+
+    const two = mk();
+    const c = two.add('stump').id;
+    two.add('spike', { node: c, name: 'left' });
+    two.add('spike', { node: c, name: 'right' });
+    near(two.stats().crit, 0.25, 1e-9);
+  }
+
+  // Якість обведення множить внесок саме тієї деталі
+  {
+    const good = mk(), bad = mk();
+    const g = good.add('stump', null, 1).id;
+    good.add('barrel', { node: g, name: 'top' }, 1);
+    const b2 = bad.add('stump', null, 1).id;
+    bad.add('barrel', { node: b2, name: 'top' }, 0);
+    near(good.stats().damage, 10 * qualityMul(1), 1e-9);
+    near(bad.stats().damage, 10 * qualityMul(0), 1e-9);
+    assert.ok(good.stats().damage > bad.stats().damage * 1.7, 'ідеал має бути майже вдвічі кращий');
+    // але ціна від старання не залежить
+    assert.equal(good.stats().cost, bad.stats().cost);
+  }
+
+  // Шипи підсилюють усе, кругле пришвидшує
+  {
+    const b = mk();
+    const s = b.add('stump').id;
+    b.add('barrel', { node: s, name: 'top' });
+    const plain = b.stats();
+    b.add('spike', { node: s, name: 'left' });
+    const spiky = b.stats();
+    assert.ok(spiky.damage > plain.damage * 1.15);
+    near(plain.rate, 1, 1e-9);
+
+    const r = mk();
+    const rs = r.add('stump').id;
+    r.add('roof', { node: rs, name: 'top' });
+    near(r.stats().rate, 1.1, 1e-9);
+  }
+
+  // Опис для рига: дерево з правильними батьками, ствол уміє цілитись
+  {
+    const b = mk();
+    const s = b.add('stump').id;
+    const bar = b.add('barrel', { node: s, name: 'top' }).id;
+    b.add('spike', { node: bar, name: 'tip' });
+    const def = b.rigDef();
+    assert.equal(def.parts.length, 3);
+    assert.equal(def.parts[0].parent, undefined);
+    assert.equal(def.parts[1].parent, 0);
+    assert.equal(def.parts[2].parent, 1);
+    assert.deepEqual(def.parts[1].pos, [0, -1.0]);
+    assert.deepEqual(def.parts[2].pos, [0.6, -0.2]);
+    assert.ok(def.parts[1].mods.some((m) => m.type === 'aim'), 'ствол має водити за ціллю');
+    assert.ok(def.parts[0].mods.every((m) => m.type !== 'aim'));
+  }
+
+  // Півот деталі враховується в коробці: горизонтальний ствол не має
+  // «додавати висоти» так, ніби він стоїть на своєму нижньому краю
+  {
+    const CAT2 = {
+      ...CAT,
+      gun: { art: 'proc:gun', size: [1.3, 0.5], cost: 30, tags: ['barrel'], pivot: [0.1, 0.5] },
+    };
+    const b = createBuild(CAT2, CFG);
+    const s = b.add('stump').id;
+    b.add('gun', { node: s, name: 'top' });
+    near(b.metrics().height, 1.25, 1e-9); // 1.0 пенька + півствола вгору
+  }
+
+  // Порожній склад нічого не коштує і не стріляє
+  {
+    const b = mk();
+    assert.equal(b.stats().cost, 0);
+    assert.equal(b.stats().damage, 0);
+    assert.equal(b.freeSockets().length, 0);
+  }
 }
 
 console.log('selfcheck: ok');

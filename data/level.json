@@ -7,7 +7,17 @@
   "base": [6, 23],
   "baseSize": [3, 2],
 
-  "spawn": { "every": 2.4, "count": 8 },
+  "waveBreak": 6,
+  "waves": [
+    { "count": 5, "every": 2.2 },
+    { "count": 7, "every": 2.0 },
+    { "count": 9, "every": 1.8 },
+    { "count": 10, "every": 1.6, "hp": 1.3 },
+    { "count": 12, "every": 1.5, "hp": 1.6 },
+    { "count": 14, "every": 1.35, "hp": 2.0 },
+    { "count": 16, "every": 1.2, "hp": 2.5 },
+    { "count": 20, "every": 1.1, "hp": 3.2 }
+  ],
 
   "startWalls": [],
 

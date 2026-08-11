@@ -60,6 +60,7 @@
         "part": "cannon/barrel", "parent": 0, "pos": [0.05, -0.62], "pivot": [0.22, 0.5], "pen": "blue",
         "mods": [
           { "type": "sway", "amp": 3.2, "freq": 0.44 },
+          { "type": "aim" },
           { "type": "recoil", "amp": 0.38, "dir": [-1, 0.35] }
         ]
       }
