@@ -9,6 +9,9 @@
     "earling": { "rig": "earling", "hp": 40, "speed": 1.5, "bounty": 8 }
   },
 
+  "_projectiles": "Швидкості снарядів. Тип снаряда рахується зі складу башти (є сплеш — ядро, немає — згусток), тому швидкість прив'язана до снаряда, а не до типу башти.",
+  "projectiles": { "boltSpeed": 11, "ballSpeed": 7 },
+
   "towers": {
     "magic_tower": { "rig": "magic_tower", "damage": 12, "rate": 1.1, "range": 4.2, "projectile": "bolt", "speed": 11 },
     "cannon": { "rig": "cannon", "damage": 30, "rate": 0.55, "range": 3.6, "projectile": "ball", "splash": 1.5, "speed": 7 }

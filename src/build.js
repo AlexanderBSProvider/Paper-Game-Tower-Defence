@@ -16,6 +16,27 @@ const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 /** Множник від того, як гравець обвів саме цю деталь. */
 export const qualityMul = (q) => 0.7 + 0.55 * clamp01(q ?? 0);
 
+/**
+ * Стати гармати зі складу башти.
+ *
+ * Тип снаряда не записаний у деталях і не має бути: він — наслідок того, що
+ * гравець поставив. Є сплеш — значить, щось важке й навісне, летить ядром;
+ * немає — б'є одиночну ціль. Тому одна й та сама «гармата» перетворюється на
+ * магію, щойно з неї знімуть усе, що дає сплеш.
+ */
+export function gunOf(stats, base = {}) {
+  if (!stats || stats.damage <= 0) return null; // башта підтримки: стоїть, але не б'є
+  const ball = (stats.splash ?? 0) > 0;
+  return {
+    damage: stats.damage,
+    rate: stats.rate,
+    range: stats.range,
+    splash: stats.splash ?? 0,
+    projectile: ball ? 'ball' : 'bolt',
+    speed: ball ? (base.ballSpeed ?? 7) : (base.boltSpeed ?? 11),
+  };
+}
+
 export function createBuild(catalogue, cfg = {}) {
   const base = { rate: 1, range: 2.4, ...(cfg.base ?? {}) };
   const combos = cfg.combos ?? [];

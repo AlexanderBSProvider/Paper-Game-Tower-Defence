@@ -13,13 +13,12 @@ import { Application, Container, Graphics } from '../lib/pixi.min.mjs';
 import { createPaper } from './paper.js';
 import { createBoil, inkContainer } from './ink.js';
 import { bakeParts, bakeCatalogue } from './procart.js';
-import { buildRig } from './rig.js';
-import { createBuild } from './build.js';
 import { createGame } from './game.js';
 import { createTools } from './tools.js';
 import { createHud } from './hud.js';
 import { createSdk } from './sdk.js';
 import { createTracePad } from './tracepad.js';
+import { createWorkshop } from './workshop.js';
 
 const [look, parts, rigDefs, level, balance, towerParts] = await Promise.all([
   fetch('./data/look.json').then((r) => r.json()),
@@ -65,7 +64,10 @@ app.stage.addChild(paper.base, world, paper.overlay, hud, padSheet, pad, boil.sp
 
 const textures = bakeParts(app.renderer, parts, look);
 const partTex = bakeCatalogue(app.renderer, towerParts.parts, look);
-const game = createGame({ world, look, level, balance, rigDefs, parts, textures, layout });
+const game = createGame({
+  world, look, level, balance, rigDefs, parts, textures, layout,
+  towerParts, partTex,
+});
 // ponytail: рестарт через перезавантаження — стан гри ніде не лишається, а
 // збірка вся локальна (~200 мс). Якщо платформа схоче крутити рекламу між
 // партіями, тут знадобиться скидання на місці, без втрати сесії SDK.
@@ -76,9 +78,18 @@ const tracePad = createTracePad({
   // З ?debug рамка тримає результат довго — інакше його не встигнути роздивитись.
   cfg: debug ? { holdMs: 8000 } : {},
 });
+const workshop = createWorkshop({
+  canvas: app.canvas, app, hudLayer: hud, worldLayer: world,
+  look, layout, game, towerParts, tracePad,
+});
+
 const tools = createTools({
-  app, canvas: app.canvas, world, layout, game, look, balance,
-  hud: hudUi, blocked: () => tracePad.open,
+  app, canvas: app.canvas, world, layout, game, look,
+  hud: hudUi,
+  // Поки відкрита рамка обведення або майстерня, поле не приймає ввід:
+  // інакше тап повз панель домальовував би стіну під нею.
+  blocked: () => tracePad.open || workshop.open || workshop.busyPointer,
+  onTower: (cx, cy) => workshop.openAt(cx, cy),
 });
 
 const debugRect = new Graphics();
@@ -108,6 +119,7 @@ function relayout() {
   game.rescale(layout.spriteScale);
   hudUi.resize(layout);
   tracePad.resize(layout);
+  workshop.resize();
 
   if (debug) {
     debugRect.clear()
@@ -135,6 +147,7 @@ app.ticker.add(({ deltaMS }) => {
 });
 
 systems.push((dt) => game.update(dt));
+systems.push((dt) => workshop.update(dt / 1000));
 systems.push(() => hudUi.tick());
 
 // Платформам треба знати, коли гравець реально в бою: по цьому вони вирішують,
@@ -153,41 +166,7 @@ sdk.loadingFinished();
 relayout();
 app.renderer.on('resize', relayout);
 
-// Тимчасові ручки, поки немає майстерні (крок 5).
-// T — обвести деталь, Y — поставити зібрану башту на поле.
-const newBuild = () => createBuild(towerParts.parts, {
-  base: towerParts.base, combos: towerParts.combos, hitbox: towerParts.hitbox,
-});
-
-/** @param {Array<[string, number|null, string|null, number?]>} recipe деталь, індекс господаря, сокет, якість */
-function demoTower(cx, cy, recipe) {
-  const b = newBuild();
-  const ids = [];
-  for (const [id, host, socket, q] of recipe) {
-    const at = host == null ? null : { node: ids[host], name: socket };
-    ids.push(b.add(id, at, q ?? 1).id);
-  }
-  const rig = buildRig(b.rigDef(), partTex, towerParts.parts, look);
-  rig.view.position.set(cx, cy);
-  rig.setScale(layout.spriteScale);
-  world.addChild(rig.view);
-  systems.push((dt) => rig.update(dt));
-  return { build: b, rig, stats: b.stats() };
-}
-
-// T гортає деталі по колу: натиснув — обвів — натиснув наступну.
-const partIds = Object.keys(towerParts.parts);
-let nextPart = 0;
-window.addEventListener('keydown', (ev) => {
-  if (ev.key !== 't' && ev.key !== 'T') return;
-  if (tracePad.open) return;
-  const id = partIds[nextPart++ % partIds.length];
-  console.log(`[обведи] ${id}`);
-  tracePad.show(towerParts.parts[id].outline)
-    .then((r) => console.log(`[${id}]`, r ? `${Math.round(r.quality * 100)}% → ×${(0.7 + 0.55 * r.quality).toFixed(2)}` : 'скасовано'));
-});
-
 window.__td = {
   app, look, layout, world, hud, hudUi, paper, state, systems, game, tools, textures, sdk,
-  tracePad, towerParts, partTex, newBuild, demoTower,
+  tracePad, workshop, towerParts, partTex,
 };

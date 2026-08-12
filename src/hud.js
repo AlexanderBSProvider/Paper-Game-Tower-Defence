@@ -112,7 +112,9 @@ export function createHud({ hud, look, balance, game, onRestart }) {
       const x0 = (L.w - n * bw) / 2;
       const y = L.h - bottom + (bottom - bh) / 2;
       SLOTS.forEach((id, i) => slots.set(id, { x: x0 + i * bw, y, w: bw, h: bh }));
-      waveAt = { x: L.w / 2, y: Math.max(bottom, L.oy) / 2 };
+      // У куток, а не по центру смуги: центр вільного поля потрібен панелі
+      // деталей, а номер хвилі — довідка, яка не мусить сидіти на видноті.
+      waveAt = { x: L.w - bottom * 0.5, y: Math.max(bottom, L.oy) / 2 };
     }
   }
 

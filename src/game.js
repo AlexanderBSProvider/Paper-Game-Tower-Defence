@@ -11,13 +11,16 @@ import { computeFlow, routeFrom, stepFrom, reaches, wouldSeal } from './flow.js'
 import { buildRig } from './rig.js';
 import { createWallet } from './economy.js';
 import { createCombat } from './combat.js';
+import { createBuild, gunOf } from './build.js';
 
 const PEN = { jitter: 0.035, step: 0.28, overshoot: 0.07 };
 
+// tower — башта збирається зі складу (towerparts), а не з готового рига:
+// те, що ставить панель інструментів, це лише заготовка, далі гравець дороблює.
 export const KINDS = {
-  wall: { w: 1, h: 1, mark: WALL, rig: null, drawTime: 0.2 },
-  magic_tower: { w: 2, h: 2, mark: TOWER, rig: 'magic_tower', drawTime: 0.4 },
-  cannon: { w: 2, h: 2, mark: TOWER, rig: 'cannon', drawTime: 0.4 },
+  wall: { w: 1, h: 1, mark: WALL, tower: false, drawTime: 0.2 },
+  magic_tower: { w: 2, h: 2, mark: TOWER, tower: true, drawTime: 0.4 },
+  cannon: { w: 2, h: 2, mark: TOWER, tower: true, drawTime: 0.4 },
 };
 
 /** Маршрут пунктиром зі стрілками — як план, накреслений у зошиті. */
@@ -55,7 +58,7 @@ function drawWall(g, cx, cy, look) {
     { ...PEN, color: look.pens.blue, width: 0.03, alpha: 0.35, halo: 0 });
 }
 
-export function createGame({ world, look, level, balance, rigDefs, parts, textures, layout }) {
+export function createGame({ world, look, level, balance, rigDefs, parts, textures, layout, towerParts, partTex }) {
   const grid = createGrid(look.core.cols, look.core.rows);
   const wallet = createWallet({
     start: balance.economy.startInk,
@@ -76,14 +79,20 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
   const rigs = [];
   const fx = [];
 
-  function place(rigId, x, y) {
-    const rig = buildRig(rigDefs[rigId], textures, parts, look);
+  function mount(rig, x, y) {
     rig.view.position.set(x, y);
     rig.setScale(layout.spriteScale);
     units.addChild(rig.view);
     rigs.push(rig);
     return rig;
   }
+
+  /** Готовий риг із rigs.json: вороги, база, декор. */
+  const place = (rigId, x, y) => mount(buildRig(rigDefs[rigId], textures, parts, look), x, y);
+
+  /** Башта зі свого складу. Початок координат складу — підошва заготовки,
+   *  тому риг стає на нижній край сліду, а не в його центр. */
+  const placeBuild = (b, x, y) => mount(buildRig(b.rigDef(), partTex, towerParts.parts, look), x, y);
   function unplace(rig) {
     rig.view.destroy({ children: true });
     rigs.splice(rigs.indexOf(rig), 1);
@@ -190,10 +199,11 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
     const id = nextId++;
     grid.fill(cx, cy, k.w, k.h, k.mark, id);
 
-    let rig = null, gfx = null;
-    if (k.rig) {
-      rig = place(k.rig, cx + k.w / 2, cy + k.h / 2);
-      combat.add(id, kind, rig, cx + k.w / 2, cy + k.h / 2);
+    let rig = null, gfx = null, comp = null;
+    if (k.tower) {
+      comp = templateBuild(kind);
+      rig = placeBuild(comp, ...footOf(cx, cy, k));
+      combat.add(id, gunOf(comp.stats(), balance.projectiles), rig, cx + k.w / 2, cy + k.h / 2);
       if (!instant) wipeIn(rig.view, units, cx - k.w / 2, cy - k.h - 0.2, k.w * 2, k.h * 2, k.drawTime);
     } else {
       gfx = new Graphics();
@@ -202,9 +212,68 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
       if (!instant) wipeIn(gfx, wallLayer, cx, cy, k.w, k.h, k.drawTime);
     }
 
-    built.set(id, { kind, cx, cy, rig, gfx });
+    built.set(id, { kind, cx, cy, rig, gfx, build: comp });
     refresh();
     return { ok: true, id };
+  }
+
+  /** Точка, у якій стоїть підошва башти: низ сліду по центру. */
+  const footOf = (cx, cy, k) => [cx + k.w / 2, cy + k.h];
+
+  /** Заготовка з панелі інструментів — це рецепт із каталогу, зібраний начисто:
+   *  шаблонні деталі гравець не обводив, тому якість у них ідеальна. */
+  function templateBuild(kind) {
+    const b = createBuild(towerParts.parts, towerParts);
+    for (const [partId, host, socket] of towerParts.templates?.[kind] ?? []) {
+      b.add(partId, host == null ? null : { node: b.nodes[host].id, name: socket }, 1);
+    }
+    return b;
+  }
+
+  /**
+   * Домалювати деталь до поставленої башти — це і є апгрейд.
+   *
+   * Риг перезбирається цілком: склад міняє не картинку, а дерево частин, тож
+   * латати наявний риг вийшло б дорожче й крихкіше, ніж зібрати заново.
+   * Відкат стрільби при цьому не скидається (див. combat.retune).
+   */
+  function addPart(towerId, partId, at, quality = 1) {
+    const item = built.get(towerId);
+    if (!item?.build) return { ok: false, reason: 'це не башта' };
+
+    const res = item.build.add(partId, at, quality);
+    if (!res.ok) return res;
+
+    // Платимо після того, як склад прийняв деталь: інакше відмова «зайнято»
+    // з'їдала б чорнило. Не вистачило — знімаємо назад, слідів не лишається.
+    const price = towerParts.parts[partId]?.cost ?? 0;
+    if (!wallet.pay(price)) {
+      item.build.remove(res.id);
+      return { ok: false, reason: 'мало чорнила' };
+    }
+
+    const k = KINDS[item.kind];
+    unplace(item.rig);
+    item.rig = placeBuild(item.build, ...footOf(item.cx, item.cy, k));
+    combat.retune(towerId, gunOf(item.build.stats(), balance.projectiles), item.rig);
+    return { ok: true, id: res.id, spent: price, stats: item.build.stats() };
+  }
+
+  /** Радіус заготовки — те, що показує привид під пальцем ще до постановки.
+   *  Рахуємо зі складу, а не з таблиці: інакше обіцяне коло розійдеться з тим,
+   *  що справді стане на поле. Шаблон незмінний, тож рахуємо один раз. */
+  const rangeCache = new Map();
+  function rangeOf(kind) {
+    if (!KINDS[kind]?.tower) return 0;
+    if (!rangeCache.has(kind)) rangeCache.set(kind, templateBuild(kind).stats().range);
+    return rangeCache.get(kind);
+  }
+
+  /** Башта під клітинкою — те, по чому тапає гравець, щоб відкрити майстерню. */
+  function towerAt(cx, cy) {
+    const id = grid.ownerAt(cx, cy);
+    const item = built.get(id);
+    return item?.build ? { id, ...item } : null;
   }
 
   function erase(cx, cy) {
@@ -260,7 +329,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
   }
 
   const combat = createCombat({
-    layer: shotLayer, look, balance, enemies, damage, distOf,
+    layer: shotLayer, look, enemies, damage, distOf,
   });
 
   function advance(e, step) {
@@ -357,6 +426,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
 
   return {
     state, wallet, grid, enemies, entry, goals, update, rescale, spawnEnemy, damage, combat,
-    build, erase, whyNot, get flow() { return flow; },
+    build, erase, whyNot, addPart, towerAt, footOf, rangeOf, built, KINDS,
+    get flow() { return flow; },
   };
 }

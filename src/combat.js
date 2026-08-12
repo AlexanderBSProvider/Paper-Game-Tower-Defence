@@ -28,15 +28,27 @@ function drawBall(g, look) {
   hatch(g, -0.13, -0.13, 0.26, 0.26, { ...pen, gap: 0.075, jitterGap: 0.2, width: 0.04, alpha: 0.6 });
 }
 
-export function createCombat({ layer, look, balance, enemies, damage, distOf }) {
+export function createCombat({ layer, look, enemies, damage, distOf }) {
   const towers = new Map(); // id → { def, rig, x, y, cd }
   const shots = [];
   const fx = [];
 
-  const add = (id, kind, rig, x, y) => {
-    const def = balance.towers[kind];
+  /** @param {object} def стати гармати: damage, rate, range, splash, projectile, speed.
+   *  Приходять уже порахованими: у зібраної башти вони залежать від складу, а не
+   *  від типу, тому тут ми більше нічого не шукаємо в таблицях. */
+  const add = (id, def, rig, x, y) => {
     if (def) towers.set(id, { def, rig, x, y, cd: 0 });
   };
+
+  /** Гравець домалював деталь: стати інші, риг новий, а відкат лишається —
+   *  інакше апгрейд посеред хвилі дарував би позачерговий постріл. */
+  const retune = (id, def, rig) => {
+    const t = towers.get(id);
+    if (!t) return;
+    t.def = def;
+    if (rig) t.rig = rig;
+  };
+
   const remove = (id) => towers.delete(id);
 
   /** Найближчий до бази ворог у радіусі. */
@@ -224,5 +236,5 @@ export function createCombat({ layer, look, balance, enemies, damage, distOf }) 
     for (let i = fx.length - 1; i >= 0; i--) if (fx[i].step(dt)) fx.splice(i, 1);
   }
 
-  return { add, remove, update, strikeOut, towers, shots };
+  return { add, retune, remove, update, strikeOut, towers, shots };
 }

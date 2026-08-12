@@ -29,6 +29,15 @@ export function createWallet({ start, costs, refund = 0.5 }) {
       return back;
     },
 
+    /** Списати довільну суму: ціна деталі живе в каталозі, а не в таблиці цін.
+     *  Так само не чіпає баланс, якщо не вистачає. */
+    pay(n) {
+      const c = Math.max(0, Math.round(n));
+      if (ink < c) return false;
+      ink -= c;
+      return true;
+    },
+
     earn(n) {
       const got = Math.max(0, Math.round(n));
       ink += got;

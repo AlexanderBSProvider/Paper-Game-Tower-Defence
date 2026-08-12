@@ -187,6 +187,10 @@ export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }) {
   return {
     get open() { return view.visible; },
 
+    /** Де стояла рамка. Потрібно майстерні: обведене летить звідси на башту,
+     *  тому після закриття координати мають лишитись. */
+    get box() { return box; },
+
     resize(layout) {
       L = layout;
       if (!view.visible) return;

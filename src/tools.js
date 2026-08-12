@@ -7,7 +7,7 @@ import { Graphics } from '../lib/pixi.min.mjs';
 import { KINDS } from './game.js';
 import { lineCells } from './grid.js';
 
-export function createTools({ app, canvas, world, layout, game, look, balance, hud, blocked }) {
+export function createTools({ app, canvas, world, layout, game, look, hud, blocked, onTower }) {
   const ghost = new Graphics();
   world.addChild(ghost);
 
@@ -59,7 +59,7 @@ export function createTools({ app, canvas, world, layout, game, look, balance, h
       .fill({ color: reason ? look.pens.red : look.pens.marker, alpha: reason ? 0.22 : 0.4 });
 
     // Радіус башти видно ще до постановки — інакше лабіринт будується наосліп.
-    const range = balance.towers[tool]?.range;
+    const range = game.rangeOf(tool);
     if (range) {
       ghost.circle(cx + k.w / 2, cy + k.h / 2, range)
         .stroke({ width: 0.05, color: look.pens.marker, alpha: 0.55 });
@@ -83,6 +83,9 @@ export function createTools({ app, canvas, world, layout, game, look, balance, h
     // партії будь-який тап ловить фінальна записка.
     const picked = hud?.hit(...screenAt(ev));
     if (picked) { if (KINDS[picked] || picked === 'eraser') setTool(picked); return; }
+    // Тап по вже поставленій башті — це не будівництво, а майстерня: туди
+    // домальовують деталі. Ластик лишається ластиком і стирає башту цілком.
+    if (tool !== 'eraser' && onTower?.(...cellAt(ev))) return;
     try { canvas.setPointerCapture?.(ev.pointerId); } catch { /* вказівник уже зник */ }
     drawing = true;
     strokeSeen.clear();

@@ -3,12 +3,14 @@
 // Мовчазний вихід 0 = все гаразд.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { buildPath, posAt, distToPath } from './pathmath.js';
 import { createGrid, lineCells, WALL, BASE } from './grid.js';
 import { computeFlow, reaches, stepFrom, routeFrom, simplify, wouldSeal } from './flow.js';
 import { createWallet } from './economy.js';
 import { makeTemplate, scoreTrace, magnetize, resample, nearestOn } from './trace.js';
-import { createBuild, qualityMul } from './build.js';
+import { createBuild, qualityMul, gunOf } from './build.js';
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
@@ -474,6 +476,74 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
     assert.equal(b.stats().damage, 0);
     assert.equal(b.freeSockets().length, 0);
   }
+}
+
+// --- гармата зі складу -----------------------------------------------------
+// Тип снаряда ніде не записаний: він наслідок складу. Тому перевіряємо саме
+// перемикання, а не переписування полів.
+{
+  assert.equal(gunOf(null), null);
+  assert.equal(gunOf({ damage: 0, rate: 1, range: 3 }), null, 'башта без зброї не стріляє');
+
+  const bolt = gunOf({ damage: 10, rate: 1.2, range: 4, splash: 0 }, { boltSpeed: 11, ballSpeed: 7 });
+  assert.equal(bolt.projectile, 'bolt');
+  assert.equal(bolt.speed, 11);
+  assert.equal(bolt.damage, 10);
+  assert.equal(bolt.rate, 1.2);
+  assert.equal(bolt.range, 4);
+
+  const ball = gunOf({ damage: 10, rate: 0.5, range: 3, splash: 1.5 }, { boltSpeed: 11, ballSpeed: 7 });
+  assert.equal(ball.projectile, 'ball');
+  assert.equal(ball.speed, 7);
+  assert.equal(ball.splash, 1.5);
+
+  // Без таблиці швидкостей усе одно дає число, а не undefined
+  assert.ok(Number.isFinite(gunOf({ damage: 1, rate: 1, range: 1 }).speed));
+}
+
+// --- заготовки з каталогу --------------------------------------------------
+// Рецепт шаблону легко зламати тихо: досить перейменувати сокет у деталі, і
+// заготовка мовчки збереться без зброї. Тому збираємо всі шаблони по-справжньому.
+{
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const TP = JSON.parse(readFileSync(root + 'data/towerparts.json', 'utf8'));
+  const balance = JSON.parse(readFileSync(root + 'data/balance.json', 'utf8'));
+
+  assert.ok(Object.keys(TP.templates).length, 'шаблонів немає');
+
+  for (const [kind, recipe] of Object.entries(TP.templates)) {
+    const b = createBuild(TP.parts, TP);
+    recipe.forEach(([partId, host, socket], i) => {
+      const at = host == null ? null : { node: b.nodes[host].id, name: socket };
+      const r = b.add(partId, at, 1);
+      assert.ok(r.ok, `${kind}: деталь ${i} (${partId}) не стала: ${r.reason}`);
+    });
+    assert.equal(b.nodes.length, recipe.length, `${kind}: склад неповний`);
+
+    const st = b.stats();
+    assert.ok(st.damage > 0, `${kind}: заготовка не завдає шкоди`);
+    assert.ok(st.range > 0 && Number.isFinite(st.range), `${kind}: радіус ${st.range}`);
+    assert.ok(st.rate > 0, `${kind}: темп ${st.rate}`);
+    // Ціна заготовки має вкладатись у те, що з гравця бере панель інструментів,
+    // інакше шаблон вигідніше зібрати вручну по деталях.
+    assert.ok(st.cost <= balance.build[kind], `${kind}: деталі коштують ${st.cost} > ${balance.build[kind]}`);
+
+    assert.ok(gunOf(st, balance.projectiles), `${kind}: гармата не зібралась`);
+    // Куди ще можна ставити — саме це показує майстерня
+    assert.ok(b.freeSockets().length > 0, `${kind}: нема вільних місць кріплення`);
+  }
+
+  // Гармата має бути навісною, магічна — ні: це видно зі складу, не з назви
+  const mk = (kind) => {
+    const b = createBuild(TP.parts, TP);
+    for (const [id, host, socket] of TP.templates[kind]) {
+      b.add(id, host == null ? null : { node: b.nodes[host].id, name: socket }, 1);
+    }
+    return gunOf(b.stats(), balance.projectiles);
+  };
+  assert.equal(mk('cannon').projectile, 'ball');
+  assert.equal(mk('magic_tower').projectile, 'bolt');
+  assert.ok(mk('cannon').damage > 0 && mk('magic_tower').damage > 0);
 }
 
 console.log('selfcheck: ok');
