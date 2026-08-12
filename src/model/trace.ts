@@ -11,12 +11,48 @@
 // Оцінка не залежить від напрямку й порядку штрихів: обводити можна хоч
 // знизу вгору, хоч у зворотному порядку — рука сама вирішує.
 
-const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+import type { Vec2 } from '../types.js';
+
+/** Штрихи в координатах рамки 0..1: [[[x,y], ...], ...] */
+export type Strokes = Vec2[][];
+
+export interface TraceSeg {
+  ax: number; ay: number; bx: number; by: number;
+  len: number;
+}
+
+export interface Template {
+  strokes: Strokes;
+  segs: TraceSeg[];
+  /** рівномірні вузли контуру — по них рахується покриття */
+  nodes: Vec2[];
+  length: number;
+  step: number;
+}
+
+export interface Score {
+  accuracy: number;
+  coverage: number;
+  speedBonus: number;
+  extraLifts: number;
+  quality: number;
+  ok: boolean;
+}
+
+export interface ScoreOpts {
+  /** скільки часу зайняло обведення */
+  seconds?: number;
+  tol?: number;
+  refSpeed?: number;
+  minCoverage?: number;
+}
+
+const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /** Рівномірні точки вздовж полілінії. Останню точку завжди лишаємо. */
-export function resample(pts, step) {
+export function resample(pts: Vec2[], step: number): Vec2[] {
   if (pts.length < 2) return pts.slice();
-  const out = [pts[0]];
+  const out: Vec2[] = [pts[0]];
   let carry = 0;
   for (let i = 1; i < pts.length; i++) {
     const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
@@ -36,8 +72,8 @@ export function resample(pts, step) {
   return out;
 }
 
-function toSegments(strokes) {
-  const segs = [];
+function toSegments(strokes: Strokes): TraceSeg[] {
+  const segs: TraceSeg[] = [];
   for (const s of strokes) {
     for (let i = 1; i < s.length; i++) {
       const [ax, ay] = s[i - 1], [bx, by] = s[i];
@@ -49,7 +85,7 @@ function toSegments(strokes) {
 }
 
 /** Найближча точка контуру до (x, y): проєкція на найкращий сегмент. */
-export function nearestOn(segs, x, y) {
+export function nearestOn(segs: TraceSeg[], x: number, y: number) {
   let best = { d: Infinity, px: x, py: y };
   for (const s of segs) {
     const dx = s.bx - s.ax, dy = s.by - s.ay;
@@ -63,9 +99,9 @@ export function nearestOn(segs, x, y) {
 
 /**
  * Контур деталі, підготовлений до оцінки.
- * @param {number[][][]} strokes штрихи: [[[x,y], ...], ...] у 0..1
+ * @param strokes штрихи: [[[x,y], ...], ...] у 0..1
  */
-export function makeTemplate(strokes, { step = 0.02 } = {}) {
+export function makeTemplate(strokes: Strokes, { step = 0.02 } = {}): Template {
   const segs = toSegments(strokes);
   const nodes = strokes.flatMap((s) => resample(s, step));
   const length = segs.reduce((a, s) => a + s.len, 0);
@@ -75,11 +111,11 @@ export function makeTemplate(strokes, { step = 0.02 } = {}) {
 /**
  * Притягнути лінію гравця до контуру. Не приймаємо руку як є і не підміняємо
  * її шаблоном — саме частка magnet вирішує, наскільки лінія лишається своєю.
- * @param {number} magnet 0 — чиста рука, 1 — чистий шаблон
+ * @param magnet 0 — чиста рука, 1 — чистий шаблон
  */
-export function magnetize(tpl, pts, magnet = 0.7) {
+export function magnetize(tpl: Template, pts: Vec2[], magnet = 0.7): Vec2[] {
   const k = clamp01(magnet);
-  return pts.map(([x, y]) => {
+  return pts.map(([x, y]): Vec2 => {
     const n = nearestOn(tpl.segs, x, y);
     return [x + (n.px - x) * k, y + (n.py - y) * k];
   });
@@ -87,12 +123,11 @@ export function magnetize(tpl, pts, magnet = 0.7) {
 
 /**
  * Оцінка обведення.
- * @param {number[][][]} strokes штрихи гравця в тих самих 0..1
- * @param {number} seconds скільки часу зайняло обведення
+ * @param strokes штрихи гравця в тих самих 0..1
  */
-export function scoreTrace(tpl, strokes, o = {}) {
+export function scoreTrace(tpl: Template, strokes: Strokes, o: ScoreOpts = {}): Score {
   const { seconds = 0, tol = 0.08, refSpeed = 0.6, minCoverage = 0.6 } = o;
-  const zero = { accuracy: 0, coverage: 0, speedBonus: 0, extraLifts: 0, quality: 0, ok: false };
+  const zero: Score = { accuracy: 0, coverage: 0, speedBonus: 0, extraLifts: 0, quality: 0, ok: false };
   if (!tpl.segs.length || !tpl.nodes.length) return zero;
 
   const pts = strokes.flatMap((s) => (s.length > 1 ? resample(s, 0.01) : s));

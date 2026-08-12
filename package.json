@@ -1,0 +1,16 @@
+{
+  "name": "td-monster-horde",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "check": "tsc --noEmit",
+    "serve": "node tools/serve.js",
+    "test": "tsc && node tools/selfcheck.js"
+  },
+  "devDependencies": {
+    "pixi.js": "8.19.0",
+    "typescript": "~5.9.3"
+  }
+}

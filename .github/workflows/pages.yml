@@ -1,8 +1,11 @@
 # Публікація гри на GitHub Pages.
 #
-# Білд-степу немає (так і задумано в плані), тож «збірка» — це відбір файлів:
-# у Pages їде тільки те, що є грою. tools/ лишається в репо, але не на хостингу:
-# там живе проксі до Gemini, і його місце — лише на машині розробника.
+# Джерела — TypeScript, тож тут є білд: tsc кладе ES-модулі в dist/, і саме вони
+# їдуть у Pages разом із index.html, lib/ (вендорений pixi, який dist/ фетчить
+# у рантаймі) і data/. Самі .ts за межі репо не виходять.
+#
+# tools/ лишається в репо, але не на хостингу: там живе селфчек і проксі до
+# Gemini, і їхнє місце — лише на машині розробника.
 name: Pages
 
 on:
@@ -34,10 +37,19 @@ jobs:
         with:
           enablement: true
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # tsc із noEmitOnError: якщо типи не сходяться, деплою не буде.
       - name: Зібрати статику гри
         run: |
+          npm run build
           mkdir -p _site
-          cp -r index.html src lib data _site/
+          cp -r index.html dist lib data _site/
           touch _site/.nojekyll   # інакше Jekyll лізе обробляти те, що обробляти не треба
 
       - uses: actions/upload-pages-artifact@v3

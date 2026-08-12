@@ -8,10 +8,27 @@
 // Обидві хочуть одного: сказати їм, коли гравець реально грає (gameplayStart) і
 // коли ні (gameplayStop) — по цьому вони вирішують, коли можна крутити рекламу.
 
-const noop = () => {};
-const quiet = (fn) => (...a) => { try { return fn(...a); } catch (e) { console.warn('[sdk]', e); } };
+/** Спільний інтерфейс платформи. Три реалізації: poki, crazygames і порожня. */
+export interface Sdk {
+  name: 'poki' | 'crazygames' | 'none';
+  init(): Promise<unknown> | void;
+  loadingFinished(): void;
+  gameplayStart(): void;
+  gameplayStop(): void;
+  /** Рекламу просимо лише між хвилями — посеред бою її не буває. */
+  commercialBreak(): Promise<unknown> | void;
+}
 
-export function createSdk() {
+const noop = () => {};
+
+/** Ковтає винятки SDK: гра не має падати через чужий скрипт. Тому й повертає
+ *  `R | undefined` — при винятку значення немає. */
+const quiet = <A extends unknown[], R>(fn: (...a: A) => R) =>
+  (...a: A): R | undefined => {
+    try { return fn(...a); } catch (e) { console.warn('[sdk]', e); }
+  };
+
+export function createSdk(): Sdk {
   const poki = typeof window.PokiSDK !== 'undefined' ? window.PokiSDK : null;
   const crazy = window.CrazyGames?.SDK ?? null;
 
@@ -30,7 +47,7 @@ export function createSdk() {
   if (crazy) {
     return {
       name: 'crazygames',
-      init: quiet(() => crazy.init()),
+      init: quiet(() => crazy.init?.()),
       loadingFinished: quiet(() => crazy.game.sdkGameLoadingStop?.()),
       gameplayStart: quiet(() => crazy.game.gameplayStart()),
       gameplayStop: quiet(() => crazy.game.gameplayStop()),

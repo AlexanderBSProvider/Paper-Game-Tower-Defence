@@ -1,5 +1,12 @@
 // Вибір цілей, який легко зламати тихо, тому живе окремо й без Pixi.
 
+/** Мінімум, який потрібен цим функціям. Дженерик, а не Enemy: так combat
+ *  отримує назад свої ж Enemy, а selfcheck ганяє їх на голих {x,y}. */
+interface Pt {
+  x: number;
+  y: number;
+}
+
 /**
  * Ланцюг рикошету. Від точки влучання стрибаємо до найближчого ворога, якого
  * ще не били, далі — від нього, і так `count` разів.
@@ -8,16 +15,18 @@
  * у кого щойно влучив, тож ланцюг тягнеться крізь натовп, а не розходиться
  * зіркою з однієї точки.
  *
- * @param {{x:number,y:number}[]} enemies
- * @param {object[]} exclude кого не чіпати (зазвичай перша ціль)
+ * @param exclude кого не чіпати (зазвичай перша ціль)
  */
-export function chainTargets(x, y, enemies, radius, count, exclude = []) {
-  const used = new Set(exclude);
-  const out = [];
+export function chainTargets<T extends Pt>(
+  x: number, y: number, enemies: readonly T[],
+  radius: number, count: number, exclude: readonly T[] = [],
+): T[] {
+  const used = new Set<T>(exclude);
+  const out: T[] = [];
   let cx = x, cy = y;
 
   for (let i = 0; i < count; i++) {
-    let best = null, bestD = Infinity;
+    let best: T | null = null, bestD = Infinity;
     for (const e of enemies) {
       if (used.has(e)) continue;
       const d = Math.hypot(e.x - cx, e.y - cy);
@@ -37,9 +46,12 @@ export function chainTargets(x, y, enemies, radius, count, exclude = []) {
  * Без перевірки напрямку «б'є у два боки» вироджується в подвійний постріл
  * в одного й того самого ворога.
  */
-export function oppositeTarget(tx, ty, first, enemies, radius, rank) {
+export function oppositeTarget<T extends Pt>(
+  tx: number, ty: number, first: T, enemies: readonly T[],
+  radius: number, rank: (e: T) => number,
+): T | null {
   const fx = first.x - tx, fy = first.y - ty;
-  let best = null, bestR = Infinity;
+  let best: T | null = null, bestR = Infinity;
   for (const e of enemies) {
     if (e === first) continue;
     const dx = e.x - tx, dy = e.y - ty;

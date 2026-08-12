@@ -10,14 +10,45 @@
 // значення змінилось. Перо щоразу дрижить інакше, тому перемальовувати HUD
 // щокадру не можна: напис почне кипіти.
 
-import { Graphics } from '../lib/pixi.min.mjs';
-import { penStroke, penPath, penRect, penCircle, penText, textWidth, hatch, scribble } from './ink.js';
+import { Container, Graphics } from '../../lib/pixi.min.mjs';
+import { penStroke, penPath, penRect, penCircle, penText, textWidth, hatch, scribble } from '../view/ink.js';
+import type { PenOpts } from '../view/ink.js';
+import type { Game, Phase } from '../game.js';
+import type { Balance, Layout, Look, Vec2 } from '../types.js';
+
+/** Місце під іконку в смузі полів. `gauge` є лише в ручки. */
+interface Slot {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  gauge?: { x: number; y: number; w: number; h: number };
+}
+
+export interface HudOpts {
+  hud: Container;
+  look: Look;
+  balance: Balance;
+  game: Game;
+  onRestart?: () => void;
+}
+
+export interface Hud {
+  resize(L: Layout): void;
+  tick(): void;
+  setTool(t: string): void;
+  readonly tool: string;
+  /** @returns що під пальцем: інструмент, 'restart' або нічого */
+  hit(px: number, py: number): string | null;
+}
 
 const SLOTS = ['ink', 'wall', 'magic_tower', 'cannon', 'eraser', 'lives'];
 const TOOLS = new Set(['wall', 'magic_tower', 'cannon', 'eraser']);
 
+type Icon = (g: Graphics, x: number, y: number, u: number, pen: PenOpts) => void;
+
 /** Іконки інструментів. Коробка — квадрат u×u з початком у (x, y). */
-const ICONS = {
+const ICONS: Record<string, Icon> = {
   wall(g, x, y, u, pen) {
     penRect(g, x + 0.18 * u, y + 0.22 * u, 0.64 * u, 0.6 * u, { ...pen, overshoot: u * 0.06 });
     penStroke(g, [[x + 0.26 * u, y + 0.76 * u], [x + 0.74 * u, y + 0.28 * u]], { ...pen, alpha: 0.45 });
@@ -29,7 +60,7 @@ const ICONS = {
   },
   cannon(g, x, y, u, pen) {
     penRect(g, x + 0.14 * u, y + 0.52 * u, 0.6 * u, 0.34 * u, { ...pen, overshoot: u * 0.05 });
-    penStroke(g, [[x + 0.34 * u, y + 0.54 * u], [x + 0.9 * u, y + 0.16 * u]], { ...pen, width: pen.width * 1.8 });
+    penStroke(g, [[x + 0.34 * u, y + 0.54 * u], [x + 0.9 * u, y + 0.16 * u]], { ...pen, width: (pen.width ?? 1) * 1.8 });
     penCircle(g, x + 0.3 * u, y + 0.84 * u, 0.14 * u, pen);
   },
   eraser(g, x, y, u, pen) {
@@ -42,7 +73,7 @@ const ICONS = {
 };
 
 /** Ручка збоку: корпус, конус і носик. Усередині корпусу видно чорнило. */
-function penIcon(g, x, y, u, pen) {
+function penIcon(g: Graphics, x: number, y: number, u: number, pen: PenOpts) {
   const bx = x + 0.28 * u, bw = 0.44 * u;
   penPath(g, [
     [bx, y + 0.02 * u], [bx + bw, y + 0.02 * u], [bx + bw, y + 0.7 * u],
@@ -53,7 +84,10 @@ function penIcon(g, x, y, u, pen) {
 }
 
 /** Життя — рисочки, як рахунок на полях. Втрачені закреслені червоним. */
-function tally(g, x, y, u, total, alive, look) {
+function tally(
+  g: Graphics, x: number, y: number, u: number,
+  total: number, alive: number, look: Look,
+) {
   const per = 5;
   const gap = 0.11 * u, rowH = 0.46 * u;
   const rows = Math.ceil(total / per);
@@ -65,7 +99,7 @@ function tally(g, x, y, u, total, alive, look) {
     const gy = top + r * rowH;
     const dead = i >= alive;
     const col = dead ? look.pens.red : look.pens.blue;
-    const o = { color: col, width: u * 0.045, alpha: dead ? 0.7 : 0.85, jitter: u * 0.02, step: u * 0.2, overshoot: u * 0.03, halo: 0.1 };
+    const o: PenOpts = { color: col, width: u * 0.045, alpha: dead ? 0.7 : 0.85, jitter: u * 0.02, step: u * 0.2, overshoot: u * 0.03, halo: 0.1 };
     if (k === per - 1) {
       // п'ята рисочка лягає навскіс через попередні чотири
       penStroke(g, [[x + 0.1 * gap, gy + 0.34 * rowH], [gx + gap * 0.6, gy + 0.04 * rowH]], o);
@@ -75,23 +109,26 @@ function tally(g, x, y, u, total, alive, look) {
   }
 }
 
-export function createHud({ hud, look, balance, game, onRestart }) {
+export function createHud({ hud, look, balance, game, onRestart }: HudOpts): Hud {
   const still = new Graphics();
   const live = new Graphics();
   const over = new Graphics(); // фінальна записка поверх усього
   hud.addChild(still, live, over);
 
-  const slots = new Map(); // id → { x, y, w, h, u, gauge? }
+  const slots = new Map<string, Slot>();
   let u = 24;
   let tool = 'wall';
-  let shown = null;   // останнє намальоване {ink, lives, tool, phase, wave}
-  let waveAt = null;  // де підписано номер хвилі
-  let L0 = null;      // остання розкладка — потрібна фінальній записці
-  let box = null;     // рамка фінальної записки, вона ж зона тапу
+  /** останнє намальоване — щоб не перемальовувати щокадру */
+  let shown: { ink: number; lives: number; tool: string; phase: Phase; wave: number } | null = null;
+  let waveAt: { x: number; y: number } | null = null; // де підписано номер хвилі
+  // `!` — інваріант: place() ставить L0 і його кличе resize(), яку main кличе
+  // на старті. Усе, що читає L0, працює лише після цього.
+  let L0!: Layout;
+  let box: { x: number; y: number; w: number; h: number } | null = null;
 
-  const price = (id) => (id === 'eraser' ? '50%' : String(balance.build[id] ?? ''));
+  const price = (id: string) => (id === 'eraser' ? '50%' : String(balance.build[id] ?? ''));
 
-  function place(L) {
+  function place(L: Layout) {
     L0 = L;
     const n = SLOTS.length;
     const bottom = Math.max(L.oy, L.h * 0.1);
@@ -120,10 +157,11 @@ export function createHud({ hud, look, balance, game, onRestart }) {
 
   function drawStill() {
     still.clear();
-    const pen = { color: look.pens.blue, width: u * 0.045, alpha: 0.85, jitter: u * 0.018, step: u * 0.22, overshoot: u * 0.05, halo: 0.12 };
+    const pen: PenOpts = { color: look.pens.blue, width: u * 0.045, alpha: 0.85, jitter: u * 0.018, step: u * 0.22, overshoot: u * 0.05, halo: 0.12 };
 
     for (const id of SLOTS) {
       const s = slots.get(id);
+      if (!s) continue;
       const ix = s.x + (s.w - u) / 2;
       if (id === 'ink') s.gauge = penIcon(still, ix, s.y, u, pen);
       else if (ICONS[id]) ICONS[id](still, ix, s.y, u, pen);
@@ -142,7 +180,7 @@ export function createHud({ hud, look, balance, game, onRestart }) {
     // Чорнило в корпусі ручки: штрихування росте знизу вгору.
     const s = slots.get('ink');
     const b = s?.gauge;
-    if (b) {
+    if (s && b) {
       const p = Math.max(0, Math.min(1, ink / balance.economy.gauge));
       const top = b.y + b.h * (1 - p);
       if (p > 0.01) {
@@ -202,7 +240,7 @@ export function createHud({ hud, look, balance, game, onRestart }) {
     over.rect(0, by + bh, W, H - by - bh).fill(dim);
     over.rect(0, by, bx, bh).fill(dim);
     over.rect(bx + bw, by, W - bx - bw, bh).fill(dim);
-    const pen = { width: s * 0.045, alpha: 0.9, jitter: s * 0.012, step: s * 0.12, overshoot: s * 0.03, halo: 0.15 };
+    const pen: PenOpts = { width: s * 0.045, alpha: 0.9, jitter: s * 0.012, step: s * 0.12, overshoot: s * 0.03, halo: 0.15 };
 
     penRect(over, bx, by, bw, bh, { ...pen, color: look.pens.pencil, alpha: 0.6, width: s * 0.022 });
 
@@ -221,7 +259,7 @@ export function createHud({ hud, look, balance, game, onRestart }) {
 
     // Кругова стрілка: розімкнене коло з двома рисочками на кінці.
     const r = s * 0.2, ay = cy + s * 1.2, from = -2.2;
-    const pts = [];
+    const pts: Vec2[] = [];
     for (let i = 0; i <= 24; i++) {
       const a = from + (i / 24) * 5.1;
       pts.push([cx + Math.cos(a) * r, ay + Math.sin(a) * r]);
@@ -253,7 +291,6 @@ export function createHud({ hud, look, balance, game, onRestart }) {
     setTool(t) { tool = t; },
     get tool() { return tool; },
 
-    /** @returns {string|null} що під пальцем: інструмент, 'restart' або нічого */
     hit(px, py) {
       if (box) { onRestart?.(); return 'restart'; }
       for (const id of TOOLS) {

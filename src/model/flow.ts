@@ -6,6 +6,17 @@
 // досяжності в тому самому полі.
 
 import { FREE } from './grid.js';
+import type { Grid } from './grid.js';
+import type { Vec2 } from '../types.js';
+
+export interface Flow {
+  /** кроків до бази; -1 — недосяжно */
+  dist: Int32Array;
+  /** індекс напрямку до бази; -1 — глухий кут */
+  dir: Int8Array;
+  cols: number;
+  rows: number;
+}
 
 const DX = [0, 1, 0, -1];
 const DY = [-1, 0, 1, 0];
@@ -14,7 +25,7 @@ const DY = [-1, 0, 1, 0];
  * @param goals клітинки-цілі (база). Самі цілі можуть бути зайняті —
  *              розходимось лише по вільних сусідах.
  */
-export function computeFlow(grid, goals) {
+export function computeFlow(grid: Grid, goals: Vec2[]): Flow {
   const n = grid.cols * grid.rows;
   const dist = new Int32Array(n).fill(-1);
   const dir = new Int8Array(n).fill(-1);
@@ -47,21 +58,21 @@ export function computeFlow(grid, goals) {
   return { dist, dir, cols: grid.cols, rows: grid.rows };
 }
 
-export function reaches(flow, x, y) {
+export function reaches(flow: Flow, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= flow.cols || y >= flow.rows) return false;
   return flow.dist[y * flow.cols + x] >= 0;
 }
 
 /** Скільки кроків звідси до бази. Поза полем і в глухому куті — Infinity,
  *  щоб число можна було просто порівнювати, не переплітаючи з -1. */
-export function distAt(flow, x, y) {
+export function distAt(flow: Flow, x: number, y: number): number {
   if (x < 0 || y < 0 || x >= flow.cols || y >= flow.rows) return Infinity;
   const d = flow.dist[y * flow.cols + x];
   return d < 0 ? Infinity : d;
 }
 
 /** Наступна клітинка на шляху до бази, або null. */
-export function stepFrom(flow, x, y) {
+export function stepFrom(flow: Flow, x: number, y: number): Vec2 | null {
   if (x < 0 || y < 0 || x >= flow.cols || y >= flow.rows) return null;
   const d = flow.dir[y * flow.cols + x];
   if (d < 0) return null;
@@ -69,8 +80,8 @@ export function stepFrom(flow, x, y) {
 }
 
 /** Полілінія центрів клітинок від точки до бази — те, що малюємо пунктиром. */
-export function routeFrom(flow, x, y) {
-  const pts = [[x + 0.5, y + 0.5]];
+export function routeFrom(flow: Flow, x: number, y: number): Vec2[] {
+  const pts: Vec2[] = [[x + 0.5, y + 0.5]];
   let cx = x, cy = y;
   for (let n = 0; n < flow.cols * flow.rows; n++) {
     const s = stepFrom(flow, cx, cy);
@@ -82,9 +93,9 @@ export function routeFrom(flow, x, y) {
 }
 
 /** Прямі ділянки склеюємо в один сегмент — менше роботи перу. */
-export function simplify(pts) {
+export function simplify(pts: Vec2[]): Vec2[] {
   if (pts.length < 3) return pts;
-  const out = [pts[0]];
+  const out: Vec2[] = [pts[0]];
   for (let i = 1; i < pts.length - 1; i++) {
     const [ax, ay] = out[out.length - 1];
     const [bx, by] = pts[i];
@@ -100,7 +111,7 @@ export function simplify(pts) {
  * mustReach — точки, з яких досяжність обов'язкова: вхід і кожен живий ворог,
  * бо замурувати ворога так само погано, як замурувати вхід.
  */
-export function wouldSeal(grid, goals, cells, mustReach) {
+export function wouldSeal(grid: Grid, goals: Vec2[], cells: Vec2[], mustReach: Vec2[]): boolean {
   const saved = cells.map(([x, y]) => grid.cells[grid.idx(x, y)]);
   for (const [x, y] of cells) grid.cells[grid.idx(x, y)] = 1;
 

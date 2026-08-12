@@ -10,16 +10,21 @@
 // щоб морди читалися й на вузькому екрані.
 
 import { Application, Container, Graphics } from '../lib/pixi.min.mjs';
-import { createPaper } from './paper.js';
-import { createBoil, inkContainer } from './ink.js';
-import { bakeParts, bakeCatalogue } from './procart.js';
+import { createPaper } from './view/paper.js';
+import { createBoil, inkContainer } from './view/ink.js';
+import { bakeParts, bakeCatalogue } from './view/procart.js';
 import { createGame } from './game.js';
-import { createTools } from './tools.js';
-import { createHud } from './hud.js';
+import { createTools } from './controller/tools.js';
+import { createHud } from './controller/hud.js';
 import { createSdk } from './sdk.js';
-import { createTracePad } from './tracepad.js';
-import { createWorkshop } from './workshop.js';
+import { createTracePad } from './controller/tracepad.js';
+import { createWorkshop } from './controller/workshop.js';
+import type {
+  Balance, Layout, Level, Look, Parts, RigDefs, TowerParts,
+} from './types.js';
 
+// Каст — єдине місце, де дані входять у програму. Без нього Promise.all віддає
+// any[], і всі шість наборів розтікаються нетипізованими по всіх модулях.
 const [look, parts, rigDefs, level, balance, towerParts] = await Promise.all([
   fetch('./data/look.json').then((r) => r.json()),
   fetch('./data/parts.json').then((r) => r.json()),
@@ -27,7 +32,7 @@ const [look, parts, rigDefs, level, balance, towerParts] = await Promise.all([
   fetch('./data/level.json').then((r) => r.json()),
   fetch('./data/balance.json').then((r) => r.json()),
   fetch('./data/towerparts.json').then((r) => r.json()),
-]);
+]) as [Look, Parts, RigDefs, Level, Balance, TowerParts];
 
 const sdk = createSdk();
 await sdk.init();
@@ -40,9 +45,9 @@ await app.init({
   resolution: Math.min(window.devicePixelRatio || 1, 2),
   autoDensity: true,
 });
-document.getElementById('app').appendChild(app.canvas);
+document.getElementById('app')!.appendChild(app.canvas);
 
-const layout = {
+const layout: Layout = {
   w: 0, h: 0,
   cell: look.sprite.refCell, // px на клітинку
   ox: 0, oy: 0,              // екранні координати клітинки (0,0) ядра
@@ -137,7 +142,7 @@ document.addEventListener('visibilitychange', () => {
   else if (game.state.phase === 'wave') sdk.gameplayStart();
 });
 
-const systems = []; // (dtMs) => void, отримують 0 на паузі
+const systems: ((dtMs: number) => void)[] = []; // отримують 0 на паузі
 
 app.ticker.add(({ deltaMS }) => {
   const dt = state.paused ? 0 : deltaMS;

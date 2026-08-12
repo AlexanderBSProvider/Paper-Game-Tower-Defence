@@ -9,11 +9,71 @@
 // дрожем щокадру — це нова геометрія на кожен кадр, чого рушій не подарує.
 
 import { Container, Graphics } from '../lib/pixi.min.mjs';
-import { penStroke, penCircle, penText, textWidth, hatch, scribble } from './ink.js';
-import { chainTargets, oppositeTarget } from './aim.js';
+import { penStroke, penCircle, penText, textWidth, hatch, scribble } from './view/ink.js';
+import { chainTargets, oppositeTarget } from './model/aim.js';
+import type { Gun } from './model/build.js';
+import type { Enemy, Fx, Look, Rig } from './types.js';
+
+/** Башта на полі. def приходить уже порахованим зі складу. */
+export interface Tower {
+  def: Gun;
+  rig: Rig;
+  x: number;
+  y: number;
+  /** відкат до наступного пострілу */
+  cd: number;
+}
+
+interface ShotBase {
+  g: Graphics;
+  dmg: number;
+  splash: number;
+  speed: number;
+  ric: number;
+  x: number;
+  y: number;
+  target: Enemy;
+  tower: Tower;
+}
+
+/** Навісний: летить по хорді плюс синусоїдна гірка, тому веде власну параметризацію. */
+interface ArcShot extends ShotBase {
+  arc: true;
+  x0: number; y0: number;
+  tx: number; ty: number;
+  len: number;
+  /** 0..1 вздовж хорди */
+  p: number;
+}
+
+interface BoltShot extends ShotBase {
+  arc: false;
+}
+
+export type Shot = ArcShot | BoltShot;
+
+export interface CombatOpts {
+  layer: Container;
+  look: Look;
+  enemies: Enemy[];
+  /** @returns true, якщо ворог помер */
+  damage(e: Enemy, amount: number): boolean;
+  /** наскільки ворог просунувся до бази */
+  distOf(e: Enemy): number;
+}
+
+export interface Combat {
+  add(id: number, def: Gun | null, rig: Rig, x: number, y: number): void;
+  retune(id: number, def: Gun | null, rig?: Rig | null): void;
+  remove(id: number): boolean;
+  update(dt: number, active?: boolean): void;
+  strikeOut(x: number, y: number, w: number, h: number): void;
+  towers: Map<number, Tower>;
+  shots: Shot[];
+}
 
 /** Снаряд магії — коротка риска з іскрою на вістрі. */
-function drawBolt(g, look) {
+function drawBolt(g: Graphics, look: Look) {
   penStroke(g, [[-0.34, 0], [0.12, 0]],
     { color: look.pens.blue, width: 0.08, alpha: 0.9, jitter: 0.015, step: 0.2, overshoot: 0.04, halo: 0.2 });
   for (const a of [-0.8, 0.8]) {
@@ -23,38 +83,38 @@ function drawBolt(g, look) {
 }
 
 /** Ядро — кулька, заштрихована навхрест. */
-function drawBall(g, look) {
+function drawBall(g: Graphics, look: Look) {
   const pen = { color: look.pens.blue, width: 0.055, alpha: 0.85, jitter: 0.012, step: 0.12, overshoot: 0, halo: 0.15 };
   penCircle(g, 0, 0, 0.17, pen);
   hatch(g, -0.13, -0.13, 0.26, 0.26, { ...pen, gap: 0.075, jitterGap: 0.2, width: 0.04, alpha: 0.6 });
 }
 
-export function createCombat({ layer, look, enemies, damage, distOf }) {
-  const towers = new Map(); // id → { def, rig, x, y, cd }
-  const shots = [];
-  const fx = [];
+export function createCombat({ layer, look, enemies, damage, distOf }: CombatOpts): Combat {
+  const towers = new Map<number, Tower>();
+  const shots: Shot[] = [];
+  const fx: Fx[] = [];
 
-  /** @param {object} def стати гармати: damage, rate, range, splash, projectile, speed.
+  /** def — стати гармати: damage, rate, range, splash, projectile, speed.
    *  Приходять уже порахованими: у зібраної башти вони залежать від складу, а не
    *  від типу, тому тут ми більше нічого не шукаємо в таблицях. */
-  const add = (id, def, rig, x, y) => {
+  const add = (id: number, def: Gun | null, rig: Rig, x: number, y: number) => {
     if (def) towers.set(id, { def, rig, x, y, cd: 0 });
   };
 
   /** Гравець домалював деталь: стати інші, риг новий, а відкат лишається —
    *  інакше апгрейд посеред хвилі дарував би позачерговий постріл. */
-  const retune = (id, def, rig) => {
+  const retune = (id: number, def: Gun | null, rig?: Rig | null) => {
     const t = towers.get(id);
-    if (!t) return;
+    if (!t || !def) return;
     t.def = def;
     if (rig) t.rig = rig;
   };
 
-  const remove = (id) => towers.delete(id);
+  const remove = (id: number) => towers.delete(id);
 
   /** Найближчий до бази ворог у радіусі. */
-  function pick(t) {
-    let best = null, bestD = Infinity;
+  function pick(t: Tower): Enemy | null {
+    let best: Enemy | null = null, bestD = Infinity;
     for (const e of enemies) {
       const d = distOf(e);
       if (d >= bestD) continue;
@@ -65,7 +125,7 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
   }
 
   // --- сліди влучання ------------------------------------------------------
-  function fade(g, dur) {
+  function fade(g: Graphics, dur: number) {
     layer.addChild(g);
     fx.push({
       t: 0,
@@ -79,7 +139,7 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
     });
   }
 
-  function spark(x, y) {
+  function spark(x: number, y: number) {
     const g = new Graphics();
     for (let i = 0; i < 3; i++) {
       const a = Math.random() * Math.PI * 2, r = 0.18 + Math.random() * 0.16;
@@ -90,7 +150,7 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
   }
 
   /** Бризки чорнила: промені й кілька крапель по колу. */
-  function splash(x, y, r) {
+  function splash(x: number, y: number, r: number) {
     const g = new Graphics();
     for (let i = 0; i < 9; i++) {
       const a = (i / 9) * Math.PI * 2 + Math.random() * 0.4;
@@ -105,7 +165,7 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
   }
 
   /** Цифра шкоди спливає вгору й тане — так само, як її дописували б збоку. */
-  function number(x, y, amount) {
+  function number(x: number, y: number, amount: number) {
     const g = new Graphics();
     const size = 0.58;
     penText(g, String(Math.round(amount)), x - textWidth(amount, size) / 2, y, size,
@@ -126,7 +186,7 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
   }
 
   /** Смерть: ворога закреслюють кількома зигзагами, і закреслення тане. */
-  function strikeOut(x, y, w, h) {
+  function strikeOut(x: number, y: number, w: number, h: number) {
     const g = new Graphics();
     scribble(g, x - w / 2, y - h, w, h, { color: look.pens.red, alpha: 0.85, halo: 0.12, passes: 2 });
     layer.addChild(g);
@@ -143,7 +203,7 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
   }
 
   /** Молнія рикошету: затухаюча лінія від одної цілі до наступної. */
-  function zap(x1, y1, x2, y2) {
+  function zap(x1: number, y1: number, x2: number, y2: number) {
     const g = new Graphics();
     penStroke(g, [[x1, y1], [x2, y2]],
       { color: look.pens.blue, width: 0.12, alpha: 0.8, jitter: 0.05, step: 0.25, overshoot: 0.05, halo: 0.25 });
@@ -161,7 +221,7 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
   }
 
   // --- постріл -------------------------------------------------------------
-  function hit(s) {
+  function hit(s: Shot) {
     const [x, y] = [s.x, s.y];
     if (s.splash) {
       splash(x, y, s.splash);
@@ -179,7 +239,7 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
         // Рикошет: ланцюг прострілу крізь натовп
         if (s.ric > 0) {
           const chain = chainTargets(s.target.x, s.target.y, enemies, 2.5, s.ric, [s.target]);
-          let prev = s.target, dmg = s.dmg * 0.6;
+          let prev: Enemy = s.target, dmg = s.dmg * 0.6;
           for (const e of chain) {
             zap(prev.x, prev.y, e.x, e.y);
             number(e.x, e.y - 2, dmg);
@@ -192,25 +252,28 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
     s.g.destroy();
   }
 
-  function shoot(t, target) {
+  function shoot(t: Tower, target: Enemy) {
     const d = t.def;
     const ang = Math.atan2(target.y - 0.5 - (t.y - 0.5), target.x - t.x);
     const g = new Graphics();
-    const s = {
+    const base: ShotBase = {
       g, dmg: d.damage, splash: d.splash ?? 0, speed: d.speed, ric: d.ricochet ?? 0,
       x: t.x + Math.cos(ang) * 0.8, y: t.y - 0.5 + Math.sin(ang) * 0.8,
-      target, arc: d.projectile === 'ball', tower: t,
+      target, tower: t,
     };
 
-    if (s.arc) {
+    // Дві форми снаряда — два різні набори полів. Об'єднання замість «усе
+    // опційне» дає advance() гарантію, що в навісного x0/tx/len справді є.
+    let s: Shot;
+    if (d.projectile === 'ball') {
       drawBall(g, look);
-      s.x0 = s.x; s.y0 = s.y;
-      s.tx = target.x; s.ty = target.y - 0.4;
-      s.len = Math.hypot(s.tx - s.x0, s.ty - s.y0);
-      s.p = 0;
+      const x0 = base.x, y0 = base.y;
+      const tx = target.x, ty = target.y - 0.4;
+      s = { ...base, arc: true, x0, y0, tx, ty, len: Math.hypot(tx - x0, ty - y0), p: 0 };
     } else {
       drawBolt(g, look);
       g.rotation = ang;
+      s = { ...base, arc: false };
     }
     g.position.set(s.x, s.y);
     layer.addChild(g);
@@ -220,7 +283,7 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
     t.rig.aim = ang;
   }
 
-  function advance(s, dt) {
+  function advance(s: Shot, dt: number): boolean {
     if (s.arc) {
       // Навісна траєкторія: рівномірно по хорді плюс синусоїдна гірка.
       s.p += (s.speed * dt) / Math.max(0.001, s.len);
@@ -244,9 +307,9 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
     return false;
   }
 
-  /** @param {boolean} active після кінця партії стрільба спиняється, а сліди
+  /** @param active після кінця партії стрільба спиняється, а сліди
    *  дотанцьовують: інакше останнє закреслення так і застигне на аркуші. */
-  function update(dt, active = true) {
+  function update(dt: number, active = true) {
     if (!active) {
       for (let i = fx.length - 1; i >= 0; i--) if (fx[i].step(dt)) fx.splice(i, 1);
       return;

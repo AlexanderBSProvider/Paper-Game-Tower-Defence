@@ -8,13 +8,51 @@
 // начисто повним пером. Саме цей крок вирішує, чи виглядатиме крива пальцем
 // лінія так, ніби її впевнено провели ручкою.
 
-import { Container, Graphics } from '../lib/pixi.min.mjs';
-import { penStroke, penRect, penText, textWidth } from './ink.js';
-import { makeTemplate, scoreTrace, magnetize } from './trace.js';
+import { Container, Graphics } from '../../lib/pixi.min.mjs';
+import { penStroke, penRect, penText, textWidth } from '../view/ink.js';
+import { makeTemplate, scoreTrace, magnetize } from '../model/trace.js';
+import type { Score, Strokes, Template } from '../model/trace.js';
+import type { Layout, Look, Vec2 } from '../types.js';
+
+/** Рамка в екранних пікселях. */
+export interface Box {
+  x: number;
+  y: number;
+  side: number;
+}
+
+/** Результат показу: оцінка плюс притягнуті до контуру штрихи. */
+export type Traced = Score & { strokes: Strokes };
+
+export interface TracePadCfg {
+  /** 0 — чиста рука, 1 — чистий шаблон */
+  magnet?: number;
+  tol?: number;
+  /** скільки тримати результат перед закриттям */
+  holdMs?: number;
+  /** пауза, після якої рука вважається спиненою */
+  idleMs?: number;
+}
+
+export interface TracePadOpts {
+  canvas: HTMLCanvasElement;
+  layer: Container;
+  sheetLayer: Container;
+  look: Look;
+  cfg?: TracePadCfg;
+}
+
+export interface TracePad {
+  readonly open: boolean;
+  readonly box: Box;
+  resize(layout: Layout): void;
+  /** @param outline штрихи деталі в 0..1. null у відповіді — передумав. */
+  show(outline: Strokes): Promise<Traced | null>;
+}
 
 const LIVE = { width: 2.2, alpha: 0.85, jitter: 0.5, step: 6, overshoot: 0, halo: 0.1, pressure: 0.15 };
 
-export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }) {
+export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }: TracePadOpts): TracePad {
   const { magnet = 0.7, tol = 0.08, holdMs = 800, idleMs = 700 } = cfg;
 
   // Підкладка малюється звичайним блендом: на шарі чорнила (multiply) світлого
@@ -33,18 +71,21 @@ export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }) {
   sheet.visible = false;
   layer.addChild(view);
 
-  let L = null;          // розкладка екрана
-  let box = null;        // { x, y, side } рамка в екранних пікселях
-  let tpl = null;
-  let strokes = [];      // штрихи гравця в 0..1
-  let cur = null;
+  // `!` — не «мені байдуже», а зафіксований інваріант: L ставить resize(), яку
+  // main кличе на старті; box ставить place() всередині show()/resize(); tpl
+  // ставить show(). Усе, що їх читає, працює лише при видимій рамці.
+  let L!: Layout;
+  let box!: Box;
+  let tpl!: Template;
+  let strokes: Strokes = [];      // штрихи гравця в 0..1
+  let cur: Vec2[] | null = null;
   let started = 0;
-  let done = null;       // resolve поточного показу
+  let done: ((v: Traced | null) => void) | null = null; // resolve поточного показу
   let frozen = false;
-  let idle = 0;          // таймер «рука спинилась»
+  let idle: ReturnType<typeof setTimeout> | undefined; // таймер «рука спинилась»
 
-  const toLocal = (px, py) => [(px - box.x) / box.side, (py - box.y) / box.side];
-  const toScreen = ([x, y]) => [box.x + x * box.side, box.y + y * box.side];
+  const toLocal = (px: number, py: number): Vec2 => [(px - box.x) / box.side, (py - box.y) / box.side];
+  const toScreen = ([x, y]: Vec2): Vec2 => [box.x + x * box.side, box.y + y * box.side];
 
   function place() {
     const side = Math.min(L.w, L.h) * 0.72;
@@ -88,7 +129,7 @@ export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }) {
   }
 
   /** Оцінка рукою на полі рамки: скільки відсотків вийшло. */
-  function drawNote(score) {
+  function drawNote(score: Score) {
     note.clear();
     const size = box.side * 0.11;
     const txt = `${Math.round(score.quality * 100)}%`;
@@ -97,7 +138,7 @@ export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }) {
       { color: score.quality > 0.75 ? look.pens.green : look.pens.blue, alpha: 0.95, width: size * 0.11 });
   }
 
-  function finish(score) {
+  function finish(score: Score) {
     frozen = true;
     // Переобведення: рука лишається своєю, але вже не може бути кривою.
     live.clear();
@@ -111,7 +152,7 @@ export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }) {
     }
     drawNote(score);
     // Знімаємо результат ДО close(): він чистить strokes.
-    const out = { ...score, strokes: strokes.map((s) => magnetize(tpl, s, magnet)) };
+    const out: Traced = { ...score, strokes: strokes.map((s) => magnetize(tpl, s, magnet)) };
     setTimeout(() => {
       const r = done;
       close();
@@ -119,7 +160,7 @@ export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }) {
     }, holdMs);
   }
 
-  function onDown(ev) {
+  function onDown(ev: PointerEvent) {
     if (!view.visible || frozen) return;
     const [x, y] = local(ev);
     // Тап повз рамку — передумав.
@@ -138,7 +179,7 @@ export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }) {
     strokes.push(cur);
   }
 
-  function onMove(ev) {
+  function onMove(ev: PointerEvent) {
     if (!cur || frozen) return;
     const p = local(ev);
     const last = cur[cur.length - 1];
@@ -161,7 +202,7 @@ export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }) {
     idle = setTimeout(() => finish(scoreTrace(tpl, strokes, { seconds: (performance.now() - started) / 1000, tol })), idleMs);
   }
 
-  const local = (ev) => {
+  const local = (ev: PointerEvent): Vec2 => {
     const r = canvas.getBoundingClientRect();
     return toLocal((ev.clientX - r.left) * (L.w / r.width), (ev.clientY - r.top) * (L.h / r.height));
   };
@@ -198,11 +239,6 @@ export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }) {
       drawChrome();
     },
 
-    /**
-     * Показати рамку з контуром.
-     * @param {number[][][]} outline штрихи деталі в 0..1
-     * @returns {Promise<null|{quality:number, strokes:number[][][]}>} null — передумав
-     */
     show(outline) {
       tpl = makeTemplate(outline);
       strokes = [];

@@ -7,20 +7,58 @@
 //   4. перехльости — рука не спиняється точно в куті, лінія вибігає за нього;
 //   5. multiply — чорнило затемнює папір, а не перекриває його (ставиться на контейнер).
 
-import { AlphaFilter, Container, Graphics, Sprite, Texture, DisplacementFilter } from '../lib/pixi.min.mjs';
+import {
+  AlphaFilter, Container, Filter, Graphics, Sprite, Texture, DisplacementFilter,
+} from '../../lib/pixi.min.mjs';
+import type { Look, Vec2 } from '../types.js';
+
+/**
+ * Опції пера — один інтерфейс на всі примітиви, усі поля опційні.
+ *
+ * Ділити його на чотири не можна: hatch і scribble розбирають свої ключі й тим
+ * самим викликом форвардять решту (`...o`) у penStroke. З окремими інтерфейсами
+ * кожен такий форвард довелося б кастити.
+ *
+ * color приймає і рядок ('#2b3a8f' з look.pens), і число (0x8f8875) — Pixi їсть
+ * обидва, а в грі використовуються обидва.
+ */
+export interface PenOpts {
+  color?: string | number;
+  width?: number;
+  alpha?: number;
+  jitter?: number;
+  step?: number;
+  overshoot?: number;
+  pressure?: number;
+  halo?: number;
+  /** penPath / penRect: замкнути контур */
+  closed?: boolean;
+  /** hatch: кут штриховки в радіанах */
+  angle?: number;
+  /** hatch: відстань між штрихами */
+  gap?: number;
+  /** hatch: розкид відстані, частка від gap */
+  jitterGap?: number;
+  /** scribble: скільки разів пройтися */
+  passes?: number;
+  /** scribble: скільки зигзагів на прохід */
+  rows?: number;
+  /** penCircle: розкид радіуса */
+  radiusJitter?: number;
+}
 
 const TAU = Math.PI * 2;
-const rnd = (a, b) => a + Math.random() * (b - a);
+const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 
 // Плавний «дрож руки»: дві хвилі різної частоти.
-function wobbler(amp) {
+function wobbler(amp: number) {
   const p1 = rnd(0, TAU), p2 = rnd(0, TAU);
   const f1 = rnd(0.5, 1.3), f2 = rnd(2.0, 3.6);
-  return (t) => (Math.sin(p1 + t * f1) * 0.68 + Math.sin(p2 + t * f2) * 0.32) * amp;
+  return (t: number) => (Math.sin(p1 + t * f1) * 0.68 + Math.sin(p2 + t * f2) * 0.32) * amp;
 }
 
 // Ресемплимо шлях рівномірно по довжині і зсуваємо кожну точку по нормалі.
-function roughen(pts, amp, step) {
+function roughen(pts: Vec2[], amp: number, step: number): Vec2[] {
   if (pts.length < 2) return pts.slice();
   const wob = wobbler(amp);
   const segs = [];
@@ -34,7 +72,7 @@ function roughen(pts, amp, step) {
   }
   if (!segs.length) return pts.slice();
 
-  const out = [];
+  const out: Vec2[] = [];
   const n = Math.max(1, Math.round(total / step));
   let si = 0;
   for (let k = 0; k <= n; k++) {
@@ -52,9 +90,9 @@ function roughen(pts, amp, step) {
 }
 
 // Вибіг за кінці: продовжуємо перший і останній сегмент.
-function overshootEnds(pts, px) {
+function overshootEnds(pts: Vec2[], px: number): Vec2[] {
   if (px <= 0 || pts.length < 2) return pts;
-  const ext = (a, b, d) => {
+  const ext = (a: Vec2, b: Vec2, d: number): Vec2 => {
     const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
     return [b[0] + (b[0] - a[0]) / len * d, b[1] + (b[1] - a[1]) / len * d];
   };
@@ -72,7 +110,10 @@ function overshootEnds(pts, px) {
 // лінію в нуль, і для цього достатньо відносної межі.
 const MIN_W = 0.25;
 
-function ribbon(g, p, color, width, alpha, pressure) {
+function ribbon(
+  g: Graphics, p: Vec2[], color: string | number,
+  width: number, alpha: number, pressure: number,
+) {
   const press = wobbler(1);
   for (let i = 1; i < p.length; i++) {
     const w = width * Math.max(MIN_W, 1 + press(i * 0.55) * pressure);
@@ -83,10 +124,9 @@ function ribbon(g, p, color, width, alpha, pressure) {
 
 /**
  * Штрих пером по полілінії.
- * @param {Graphics} g
- * @param {number[][]} pts — [[x,y], ...] у координатах Graphics
+ * @param pts — [[x,y], ...] у координатах Graphics
  */
-export function penStroke(g, pts, o = {}) {
+export function penStroke(g: Graphics, pts: Vec2[], o: PenOpts = {}) {
   const {
     color = '#2b3a8f', width = 2, alpha = 0.9,
     jitter = 1.1, step = 5, overshoot = 3,
@@ -99,7 +139,7 @@ export function penStroke(g, pts, o = {}) {
 }
 
 /** Ломана/багатокутник: кожне ребро — окремий штрих, тому кути з перехльостом. */
-export function penPath(g, pts, o = {}) {
+export function penPath(g: Graphics, pts: Vec2[], o: PenOpts = {}) {
   const closed = o.closed ?? false;
   const n = pts.length;
   const edges = closed ? n : n - 1;
@@ -107,12 +147,12 @@ export function penPath(g, pts, o = {}) {
   return g;
 }
 
-export function penCircle(g, cx, cy, r, o = {}) {
+export function penCircle(g: Graphics, cx: number, cy: number, r: number, o: PenOpts = {}) {
   const wob = wobbler(o.radiusJitter ?? r * 0.045);
   const steps = Math.max(14, Math.round(r * 1.1));
   const from = rnd(-0.25, 0.25);
   const to = TAU + rnd(0.12, 0.45); // рука замикає коло з нахлистом
-  const pts = [];
+  const pts: Vec2[] = [];
   for (let i = 0; i <= steps; i++) {
     const a = from + (to - from) * (i / steps);
     const rr = r + wob(a * 2.2);
@@ -121,15 +161,18 @@ export function penCircle(g, cx, cy, r, o = {}) {
   return penStroke(g, pts, { overshoot: 0, jitter: 0.5, ...o });
 }
 
-export function penRect(g, x, y, w, h, o = {}) {
+export function penRect(g: Graphics, x: number, y: number, w: number, h: number, o: PenOpts = {}) {
   return penPath(g, [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], { closed: true, overshoot: 4, ...o });
 }
 
 // Liang–Barsky: обрізаємо відрізок прямокутником.
-function clipSeg(x0, y0, x1, y1, xmin, ymin, xmax, ymax) {
+function clipSeg(
+  x0: number, y0: number, x1: number, y1: number,
+  xmin: number, ymin: number, xmax: number, ymax: number,
+): [Vec2, Vec2] | null {
   let t0 = 0, t1 = 1;
   const dx = x1 - x0, dy = y1 - y0;
-  const tests = [[-dx, x0 - xmin], [dx, xmax - x0], [-dy, y0 - ymin], [dy, ymax - y0]];
+  const tests: Vec2[] = [[-dx, x0 - xmin], [dx, xmax - x0], [-dy, y0 - ymin], [dy, ymax - y0]];
   for (const [p, q] of tests) {
     if (p === 0) { if (q < 0) return null; continue; }
     const r = q / p;
@@ -140,11 +183,11 @@ function clipSeg(x0, y0, x1, y1, xmin, ymin, xmax, ymax) {
 }
 
 /** Штрихування — єдиний спосіб «залити» area в цьому стилі. Суцільних заливок немає. */
-export function hatch(g, x, y, w, h, o = {}) {
+export function hatch(g: Graphics, x: number, y: number, w: number, h: number, o: PenOpts = {}) {
   const { angle = Math.PI * 0.28, gap = 6, jitterGap = 0.35 } = o;
   const dx = Math.cos(angle), dy = Math.sin(angle);
   const nx = -dy, ny = dx;
-  const corners = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+  const corners: Vec2[] = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
   const proj = corners.map(([px, py]) => px * nx + py * ny);
   const diag = Math.hypot(w, h);
 
@@ -159,13 +202,13 @@ export function hatch(g, x, y, w, h, o = {}) {
 /** Закреслити — те, що робить рука, коли об'єкт більше не потрібен. Смерть ворога.
  *  Розліт рядків задано часткою висоти: у клітинках абсолютні пікселі виносили
  *  зигзаги на дві клітинки за межі того, що закреслюють. */
-export function scribble(g, x, y, w, h, o = {}) {
+export function scribble(g: Graphics, x: number, y: number, w: number, h: number, o: PenOpts = {}) {
   // Усі числа — частки коробки, а не пікселі: тим самим викликом закреслюємо
   // і ворога в клітинках світу, і напис у HUD.
   const passes = o.passes ?? 2;
   const rows = o.rows ?? 5;
   for (let p = 0; p < passes; p++) {
-    const pts = [];
+    const pts: Vec2[] = [];
     for (let i = 0; i <= rows; i++) {
       pts.push([
         x + (i % 2 ? w * rnd(0.9, 1.08) : w * rnd(-0.08, 0.1)),
@@ -180,7 +223,7 @@ export function scribble(g, x, y, w, h, o = {}) {
 // --- рукописні цифри -------------------------------------------------------
 // Шрифт не вендоримо: у зошиті цифри писані від руки, а наше перо вже вміє
 // дрож і натиск. Кожен гліф — кілька ломаних у коробці 0.6 × 1.
-const GLYPHS = {
+const GLYPHS: Record<string, Vec2[][]> = {
   0: [[[0.05, 0.18], [0.3, 0.02], [0.55, 0.2], [0.55, 0.8], [0.3, 0.98], [0.05, 0.8], [0.05, 0.18]]],
   1: [[[0.08, 0.22], [0.32, 0.03], [0.32, 0.98]]],
   2: [[[0.04, 0.22], [0.16, 0.03], [0.46, 0.04], [0.56, 0.26], [0.05, 0.97], [0.57, 0.95]]],
@@ -193,9 +236,9 @@ const GLYPHS = {
   9: [[[0.54, 0.34], [0.2, 0.46], [0.05, 0.22], [0.34, 0.03], [0.56, 0.2], [0.48, 0.74], [0.28, 0.98]]],
   '+': [[[0.05, 0.55], [0.55, 0.55]], [[0.3, 0.3], [0.3, 0.8]]],
   '-': [[[0.05, 0.55], [0.55, 0.55]]],
-  '/': [[[0.5, 0.04], [0.1, 0.96]]],
   '%': [[[0.52, 0.05], [0.05, 0.95]], [[0.06, 0.06], [0.24, 0.06], [0.24, 0.3], [0.06, 0.3], [0.06, 0.06]], [[0.36, 0.68], [0.55, 0.68], [0.55, 0.93], [0.36, 0.93], [0.36, 0.68]]],
   '×': [[[0.08, 0.18], [0.52, 0.86]], [[0.52, 0.18], [0.08, 0.86]]],
+  // Раніше '/' стояв двічі; JS мовчки лишав останній, TS такий літерал не пропускає.
   '/': [[[0.52, 0.04], [0.08, 0.96]]],
   '!': [[[0.3, 0.04], [0.3, 0.66]], [[0.29, 0.86], [0.32, 0.97]]],
   '.': [[[0.28, 0.88], [0.32, 0.92], [0.28, 0.96], [0.24, 0.92], [0.28, 0.88]]],
@@ -203,18 +246,25 @@ const GLYPHS = {
 
 const ADVANCE = 0.78; // ширина гліфа з міжлітерним просвітом
 
-export const textWidth = (str, size) => String(str).length * ADVANCE * size;
+export const textWidth = (str: string | number, size: number) => String(str).length * ADVANCE * size;
 
 /** Написати від руки. (x, y) — лівий верхній кут рядка, size — висота цифри. */
-export function penText(g, str, x, y, size, o = {}) {
-  const opt = {
+export function penText(
+  g: Graphics, str: string | number,
+  x: number, y: number, size: number, o: PenOpts = {},
+) {
+  const opt: PenOpts = {
     width: size * 0.1, jitter: size * 0.025, step: size * 0.34,
     overshoot: size * 0.06, halo: 0.1, pressure: 0.3, ...o,
   };
   let cx = x;
   for (const ch of String(str)) {
     const glyph = GLYPHS[ch];
-    if (glyph) for (const s of glyph) penStroke(g, s.map(([px, py]) => [cx + px * size, y + py * size]), opt);
+    if (glyph) {
+      for (const s of glyph) {
+        penStroke(g, s.map(([px, py]): Vec2 => [cx + px * size, y + py * size]), opt);
+      }
+    }
     cx += ADVANCE * size;
   }
   return g;
@@ -223,11 +273,11 @@ export function penText(g, str, x, y, size, o = {}) {
 // --- boil: жива лінія ------------------------------------------------------
 // Низькочастотний шум як карта зсуву. Кадр міняється дискретно (12 fps) — саме
 // дискретність читається як мальована анімація, плавний зсув виглядає як «желе».
-function noiseTexture(size) {
+function noiseTexture(size: number) {
   const small = 24;
   const a = document.createElement('canvas');
   a.width = a.height = small;
-  const ga = a.getContext('2d');
+  const ga = a.getContext('2d')!;
   const img = ga.createImageData(small, small);
   for (let i = 0; i < img.data.length; i += 4) {
     img.data[i] = 128 + (Math.random() - 0.5) * 150;     // x
@@ -239,13 +289,20 @@ function noiseTexture(size) {
 
   const b = document.createElement('canvas');
   b.width = b.height = size;
-  const gb = b.getContext('2d');
+  const gb = b.getContext('2d')!;
   gb.imageSmoothingEnabled = true;
   gb.drawImage(a, 0, 0, size, size);
   return Texture.from(b);
 }
 
-export function createBoil(look) {
+export interface Boil {
+  sprite: Sprite;
+  filter: DisplacementFilter;
+  resize(w: number, h: number): void;
+  tick(dtMs: number): void;
+}
+
+export function createBoil(look: Look): Boil {
   const frames = [noiseTexture(256), noiseTexture(256), noiseTexture(256)];
   const sprite = new Sprite(frames[0]);
   sprite.renderable = false; // трансформ потрібен фільтру, малювати не треба
@@ -277,10 +334,10 @@ export function createBoil(look) {
  * за 8-10 накладань будь-яка ручка сідає в чорний і синє від червоного не
  * відрізнити. Один множник на весь шар лишає колір таким, яким його задано.
  *
- * @param {Filter[]} filters — фільтри шару (напр. boil). Множить на папір останній,
+ * @param filters — фільтри шару (напр. boil). Множить на папір останній,
  *   бо саме він малює результат у ціль; якщо фільтрів немає, беремо порожній.
  */
-export function inkContainer(filters = []) {
+export function inkContainer(filters: Filter[] = []) {
   const c = new Container();
   const list = filters.length ? filters : [new AlphaFilter()];
   list[list.length - 1].blendMode = 'multiply';

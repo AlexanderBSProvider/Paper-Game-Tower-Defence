@@ -1,11 +1,32 @@
 // Математика траси. Без залежностей і без Pixi — тому її можна ганяти в node
-// (див. selfcheck.js). Усі координати в клітинках.
+// (див. tools/selfcheck.js). Усі координати в клітинках.
 
-/** @typedef {[number, number]} Pt */
+import type { Vec2 } from '../types.js';
+
+export interface Seg {
+  x0: number; y0: number; x1: number; y1: number;
+  len: number;
+  /** довжина траси до початку цього сегмента */
+  start: number;
+  /** одиничний напрямок */
+  ux: number; uy: number;
+}
+
+export interface Path {
+  segs: Seg[];
+  length: number;
+}
+
+export interface PathPos {
+  x: number;
+  y: number;
+  angle: number;
+  seg: number;
+}
 
 /** Полілінія → сегменти з накопиченою довжиною. */
-export function buildPath(waypoints) {
-  const segs = [];
+export function buildPath(waypoints: Vec2[]): Path {
+  const segs: Seg[] = [];
   let total = 0;
   for (let i = 1; i < waypoints.length; i++) {
     const [x0, y0] = waypoints[i - 1];
@@ -25,7 +46,7 @@ export function buildPath(waypoints) {
  * hint — індекс сегмента з попереднього кадру: вороги йдуть уперед, тому пошук
  * зазвичай не робить жодної ітерації.
  */
-export function posAt(path, d, hint = 0) {
+export function posAt(path: Path, d: number, hint = 0): PathPos {
   const { segs } = path;
   const dist = Math.min(Math.max(d, 0), path.length);
 
@@ -44,7 +65,7 @@ export function posAt(path, d, hint = 0) {
 }
 
 /** Відстань від точки до найближчого місця траси — валідатор для забудови. */
-export function distToPath(path, x, y) {
+export function distToPath(path: Path, x: number, y: number): number {
   let best = Infinity;
   for (const s of path.segs) {
     const t = Math.min(Math.max((x - s.x0) * s.ux + (y - s.y0) * s.uy, 0), s.len);

@@ -11,10 +11,92 @@
 // низ заготовки, тому «вище» означає менший y, а всі виміри висоти беруться
 // відносно низу.
 
-const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+import type {
+  Combo, Mod, PartStats, Projectiles, RigDef, TowerPart, Vec2,
+} from '../types.js';
+
+/** Деталь, поставлена в башту. Координати абсолютні, від низу заготовки. */
+export interface BuildNode {
+  id: number;
+  partId: string;
+  part: TowerPart;
+  parent: number | null;
+  socket: string | null;
+  quality: number;
+  x: number;
+  y: number;
+}
+
+/** Вільне місце кріплення з абсолютними координатами. */
+export interface Socket {
+  node: number;
+  name: string;
+  x: number;
+  y: number;
+}
+
+/** Виміри силуету — те, через що позиція деталі має значення. */
+export interface Metrics {
+  height: number;
+  width: number;
+  topMass: number;
+  spikes: number;
+  round: number;
+  symmetry: number;
+}
+
+/** Стати складу. Успадковує PartStats, бо комбо дописують сюди свої поля
+ *  (ricochet / fear / twoWay) через Object.assign. */
+export interface Stats extends PartStats {
+  cost: number;
+  damage: number;
+  splash: number;
+  rate: number;
+  range: number;
+  crit: number;
+  parts: number;
+  metrics: Metrics;
+  combos: string[];
+}
+
+/** Гармата, як її бачить combat. */
+export interface Gun {
+  damage: number;
+  rate: number;
+  range: number;
+  splash: number;
+  projectile: 'ball' | 'bolt';
+  speed: number;
+  ricochet?: number;
+  fear?: number;
+  twoWay?: number;
+}
+
+export type AddResult =
+  | { ok: true; id: number }
+  | { ok: false; reason: string };
+
+export interface BuildCfg {
+  base?: { rate?: number; range?: number };
+  combos?: Combo[];
+  hitbox?: Vec2;
+}
+
+export interface Build {
+  readonly nodes: BuildNode[];
+  add(partId: string, at?: { node: number; name: string } | null, quality?: number): AddResult;
+  remove(id: number): BuildNode[];
+  freeSockets(): Socket[];
+  metrics(): Metrics;
+  stats(): Stats;
+  rigDef(): RigDef;
+  readonly empty: boolean;
+}
+
+const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /** Множник від того, як гравець обвів саме цю деталь. */
-export const qualityMul = (q) => 0.7 + 0.55 * clamp01(q ?? 0);
+export const qualityMul = (q?: number) => 0.7 + 0.55 * clamp01(q ?? 0);
 
 /**
  * Стати гармати зі складу башти.
@@ -24,7 +106,7 @@ export const qualityMul = (q) => 0.7 + 0.55 * clamp01(q ?? 0);
  * немає — б'є одиночну ціль. Тому одна й та сама «гармата» перетворюється на
  * магію, щойно з неї знімуть усе, що дає сплеш.
  */
-export function gunOf(stats, base = {}) {
+export function gunOf(stats: Stats | null, base: Projectiles = {}): Gun | null {
   if (!stats || stats.damage <= 0) return null; // башта підтримки: стоїть, але не б'є
   const ball = (stats.splash ?? 0) > 0;
   return {
@@ -34,22 +116,28 @@ export function gunOf(stats, base = {}) {
     splash: stats.splash ?? 0,
     projectile: ball ? 'ball' : 'bolt',
     speed: ball ? (base.ballSpeed ?? 7) : (base.boltSpeed ?? 11),
+    // Комбо дописують свої поля в stats(), а сюди вони не доходили: гармата
+    // збиралась заново з шести полів. Через це рикошет, страх і двобічний
+    // ствол ніколи не спрацьовували — combat читав undefined.
+    ricochet: stats.ricochet,
+    fear: stats.fear,
+    twoWay: stats.twoWay,
   };
 }
 
-export function createBuild(catalogue, cfg = {}) {
+export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg = {}): Build {
   const base = { rate: 1, range: 2.4, ...(cfg.base ?? {}) };
   const combos = cfg.combos ?? [];
 
-  const nodes = [];  // { id, partId, part, parent, socket, quality, x, y }
+  const nodes: BuildNode[] = [];
   let nextId = 1;
 
-  const byId = (id) => nodes.find((n) => n.id === id);
-  const taken = (id, name) => nodes.some((n) => n.parent === id && n.socket === name);
+  const byId = (id: number) => nodes.find((n) => n.id === id);
+  const taken = (id: number, name: string) => nodes.some((n) => n.parent === id && n.socket === name);
 
   /** Вільні місця кріплення з абсолютними координатами — для підсвітки в UI. */
-  function freeSockets() {
-    const out = [];
+  function freeSockets(): Socket[] {
+    const out: Socket[] = [];
     for (const n of nodes) {
       for (const [name, off] of Object.entries(n.part.sockets ?? {})) {
         if (taken(n.id, name)) continue;
@@ -61,17 +149,21 @@ export function createBuild(catalogue, cfg = {}) {
 
   /**
    * Поставити деталь. Заготовка ставиться без сокета (перша деталь).
-   * @param {string} partId ключ каталогу
-   * @param {{node:number,name:string}|null} at місце кріплення
-   * @param {number} quality якість обведення 0..1
+   * @param partId ключ каталогу
+   * @param at місце кріплення
+   * @param quality якість обведення 0..1
    */
-  function add(partId, at = null, quality = 1) {
+  function add(
+    partId: string,
+    at: { node: number; name: string } | null = null,
+    quality = 1,
+  ): AddResult {
     const part = catalogue[partId];
     if (!part) return { ok: false, reason: 'немає такої деталі' };
 
     if (!at) {
       if (nodes.length) return { ok: false, reason: 'заготовка вже є' };
-      const n = { id: nextId++, partId, part, parent: null, socket: null, quality, x: 0, y: 0 };
+      const n: BuildNode = { id: nextId++, partId, part, parent: null, socket: null, quality, x: 0, y: 0 };
       nodes.push(n);
       return { ok: true, id: n.id };
     }
@@ -82,7 +174,7 @@ export function createBuild(catalogue, cfg = {}) {
     if (!off) return { ok: false, reason: 'немає такого місця' };
     if (taken(at.node, at.name)) return { ok: false, reason: 'зайнято' };
 
-    const n = {
+    const n: BuildNode = {
       id: nextId++, partId, part, parent: host.id, socket: at.name, quality,
       x: host.x + off[0], y: host.y + off[1],
     };
@@ -91,9 +183,9 @@ export function createBuild(catalogue, cfg = {}) {
   }
 
   /** Зняти деталь разом з усім, що на ній трималось. @returns знято */
-  function remove(id) {
-    const doomed = new Set();
-    const walk = (i) => {
+  function remove(id: number): BuildNode[] {
+    const doomed = new Set<number>();
+    const walk = (i: number) => {
       doomed.add(i);
       for (const n of nodes) if (n.parent === i) walk(n.id);
     };
@@ -105,7 +197,7 @@ export function createBuild(catalogue, cfg = {}) {
   }
 
   /** Виміри силуету — те, через що позиція деталі має значення. */
-  function metrics() {
+  function metrics(): Metrics {
     if (!nodes.length) return { height: 0, width: 0, topMass: 0, spikes: 0, round: 0, symmetry: 1 };
 
     let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
@@ -147,18 +239,18 @@ export function createBuild(catalogue, cfg = {}) {
   }
 
   /** Комбо: пара тегів, яких немає в жодної деталі окремо. */
-  function activeCombos() {
+  function activeCombos(): Combo[] {
     const tags = new Set(nodes.flatMap((n) => n.part.tags ?? []));
     return combos.filter((c) => c.need.every((t) => tags.has(t)));
   }
 
-  function stats() {
+  function stats(): Stats {
     const m = metrics();
-    const sum = (key) => nodes.reduce(
+    const sum = (key: keyof PartStats) => nodes.reduce(
       (a, n) => a + (n.part.stats?.[key] ?? 0) * qualityMul(n.quality), 0,
     );
 
-    const out = {
+    const out: Stats = {
       cost: nodes.reduce((a, n) => a + (n.part.cost ?? 0), 0),
       damage: sum('damage') * (1 + 0.15 * m.spikes),
       splash: sum('splash'),
@@ -167,6 +259,8 @@ export function createBuild(catalogue, cfg = {}) {
       range: base.range + 0.6 * m.height + 0.4 * m.topMass + sum('range'),
       crit: 0.05 + 0.20 * m.symmetry,
       parts: nodes.length,
+      metrics: m,
+      combos: [],
     };
 
     for (const c of activeCombos()) Object.assign(out, c.gives);
@@ -177,21 +271,23 @@ export function createBuild(catalogue, cfg = {}) {
    * Опис для buildRig: дерево частин у координатах батька.
    * Фаза в кожної деталі своя, тому башта хитається шматками, а не цілком.
    */
-  function rigDef() {
+  function rigDef(): RigDef {
     const index = new Map(nodes.map((n, i) => [n.id, i]));
     return {
       hitbox: cfg.hitbox ?? [2, 2],
       anchors: { hit: [0, -metrics().height * 0.5], ground: [0, 0] },
       parts: nodes.map((n) => {
         // Зсув дає сокет БАТЬКА, а не власні сокети деталі.
-        const off = n.parent == null ? [0, 0] : (byId(n.parent).part.sockets?.[n.socket] ?? [0, 0]);
+        const off: Vec2 = n.parent == null
+          ? [0, 0]
+          : (byId(n.parent)!.part.sockets?.[n.socket!] ?? [0, 0]);
         const tags = n.part.tags ?? [];
-        const mods = [{ type: 'sway', amp: 2.2 + (n.id % 3), freq: 0.35 + (n.id % 5) * 0.06 }];
+        const mods: Mod[] = [{ type: 'sway', amp: 2.2 + (n.id % 3), freq: 0.35 + (n.id % 5) * 0.06 }];
         if (tags.includes('barrel')) mods.push({ type: 'aim' }, { type: 'recoil', amp: 0.3, dir: [-1, 0.3] });
         return {
           part: n.partId,
           parent: n.parent == null ? undefined : index.get(n.parent),
-          pos: n.parent == null ? [0, 0] : off,
+          pos: n.parent == null ? ([0, 0] as Vec2) : off,
           pivot: n.part.pivot ?? [0.5, 1],
           pen: n.part.pen ?? 'blue',
           mods,

@@ -1,17 +1,24 @@
 // Селфчек математики, яку легко зламати тихо. Фреймворків не ставимо:
-//   node src/selfcheck.js
+//   npm test          (tsc + цей файл)
+//   node tools/selfcheck.js   (якщо dist/ уже зібраний)
 // Мовчазний вихід 0 = все гаразд.
+//
+// Імпорти йдуть у dist/, а не в src/: джерела тепер .ts, а перевіряти треба
+// саме те, що поїде в браузер.
+//
+// Усе, що тут перевіряється, лежить у dist/model/ — і це не збіг: модель тим і
+// визначена, що не знає про Pixi, тож ганяється з node без браузера.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { buildPath, posAt, distToPath } from './pathmath.js';
-import { createGrid, lineCells, WALL, BASE } from './grid.js';
-import { computeFlow, reaches, stepFrom, routeFrom, simplify, wouldSeal } from './flow.js';
-import { createWallet } from './economy.js';
-import { makeTemplate, scoreTrace, magnetize, resample, nearestOn } from './trace.js';
-import { createBuild, qualityMul, gunOf } from './build.js';
-import { chainTargets, oppositeTarget } from './aim.js';
+import { buildPath, posAt, distToPath } from '../dist/model/pathmath.js';
+import { createGrid, lineCells, WALL, BASE } from '../dist/model/grid.js';
+import { computeFlow, reaches, stepFrom, routeFrom, simplify, wouldSeal } from '../dist/model/flow.js';
+import { createWallet } from '../dist/model/economy.js';
+import { makeTemplate, scoreTrace, magnetize, resample, nearestOn } from '../dist/model/trace.js';
+import { createBuild, qualityMul, gunOf } from '../dist/model/build.js';
+import { chainTargets, oppositeTarget } from '../dist/model/aim.js';
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
@@ -545,6 +552,39 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
   assert.equal(mk('cannon').projectile, 'ball');
   assert.equal(mk('magic_tower').projectile, 'bolt');
   assert.ok(mk('cannon').damage > 0 && mk('magic_tower').damage > 0);
+
+  // Комбо мають доїжджати до гармати. Два способи зламати їх тихо, і обидва
+  // вже спрацьовували: (1) gunOf збирав новий об'єкт із шести полів і викидав
+  // ricochet / fear / twoWay; (2) в need стоїть тег, якого немає в жодної
+  // деталі, тож комбо не збереться ніколи. Перевіряємо обидва.
+  const partWithTag = (tag) =>
+    Object.entries(TP.parts).find(([, p]) => (p.tags ?? []).includes(tag))?.[0];
+
+  for (const c of TP.combos) {
+    for (const tag of c.need) {
+      assert.ok(partWithTag(tag), `комбо ${c.id}: у каталозі немає деталі з тегом «${tag}»`);
+    }
+
+    const b = createBuild(TP.parts, TP);
+    b.add('stump', null, 1);
+    // Зброя потрібна окремо: комбо самі шкоди не дають, а без шкоди gunOf
+    // чесно повертає null (башта підтримки).
+    const ids = ['cannon', ...c.need.map(partWithTag)];
+    for (const id of ids) {
+      const slot = b.freeSockets()[0];
+      assert.ok(slot, `комбо ${c.id}: нема куди чіпляти ${id}`);
+      const r = b.add(id, { node: slot.node, name: slot.name }, 1);
+      assert.ok(r.ok, `комбо ${c.id}: ${id} не стала: ${r.reason}`);
+    }
+
+    const st = b.stats();
+    assert.ok(st.combos.includes(c.id), `комбо ${c.id} не зібралось`);
+    const gun = gunOf(st, balance.projectiles);
+    assert.ok(gun, `комбо ${c.id}: гармата не зібралась`);
+    for (const [key, val] of Object.entries(c.gives)) {
+      assert.equal(gun[key], val, `комбо ${c.id}: ${key} не доїхав до гармати`);
+    }
+  }
 }
 
 // --- вибір цілей для комбо -------------------------------------------------

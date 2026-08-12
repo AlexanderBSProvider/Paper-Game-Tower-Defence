@@ -11,24 +11,48 @@
 // (1.5 клітинки / 75 px = 0.02), тож дитина спрайта поїхала б у 50 разів
 // ближче до піво́та; суглоб тримає координати в чистих клітинках.
 
-import { Container, Sprite } from '../lib/pixi.min.mjs';
+import { Container, Sprite, Texture } from '../../lib/pixi.min.mjs';
+import type { Look, Mod, Rig, RigDef, Vec2 } from '../types.js';
+
+/** Частина рига в зібраному вигляді: суглоб, спрайт і базовий трансформ. */
+interface Node {
+  joint: Container;
+  spr: Sprite;
+  mods: Mod[];
+  x0: number;
+  y0: number;
+  rot0: number;
+  /** щоб натовп не дихав в унісон */
+  phase: number;
+}
+
+/** Стан, з якого модифікатори беруть силу: його задає гра. */
+interface Ctx {
+  moving: boolean;
+  attack: number;
+  hit: number;
+  dead: boolean;
+  aim: number | null;
+}
+
+type ModFn = (n: Node, m: Mod, t: number, ctx: Ctx, g: number) => void;
 
 const TAU = Math.PI * 2;
 const D2R = Math.PI / 180;
-const ph = (n, m) => n.phase + (m.phase ?? 0);
+const ph = (n: Node, m: Mod) => n.phase + (m.phase ?? 0);
 
-const MODS = {
+const MODS: Record<string, ModFn> = {
   // дихання
   bob(n, m, t, ctx, g) {
-    n.joint.y = n.y0 + m.amp * g * Math.sin((t * m.freq + ph(n, m)) * TAU);
+    n.joint.y = n.y0 + (m.amp ?? 0) * g * Math.sin((t * (m.freq ?? 0) + ph(n, m)) * TAU);
   },
   // покачування
   sway(n, m, t, ctx, g) {
-    n.joint.rotation = n.rot0 + m.amp * D2R * g * Math.sin((t * m.freq + ph(n, m)) * TAU);
+    n.joint.rotation = n.rot0 + (m.amp ?? 0) * D2R * g * Math.sin((t * (m.freq ?? 0) + ph(n, m)) * TAU);
   },
   // стискання-розтягування; зберігає видимий об'єм
   squash(n, m, t, ctx, g) {
-    const s = m.amp * g * Math.sin((t * m.freq + ph(n, m)) * TAU);
+    const s = (m.amp ?? 0) * g * Math.sin((t * (m.freq ?? 0) + ph(n, m)) * TAU);
     n.joint.scale.set(1 - s, 1 + s);
   },
   // кліпання: частина стискається по вертикалі на мить
@@ -38,17 +62,17 @@ const MODS = {
     n.joint.scale.set(1, p < (m.hold ?? 0.1) ? 0.12 : 1);
   },
   spin(n, m, t, ctx, g) {
-    n.joint.rotation = n.rot0 + t * m.freq * TAU * g;
+    n.joint.rotation = n.rot0 + t * (m.freq ?? 0) * TAU * g;
   },
   // замах на атаці — додається до того, що вже накрутив sway
   swing(n, m, t, ctx) {
-    n.joint.rotation += m.amp * D2R * ctx.attack;
+    n.joint.rotation += (m.amp ?? 0) * D2R * ctx.attack;
   },
   // віддача вздовж напрямку
   recoil(n, m, t, ctx) {
     const d = m.dir ?? [1, 0];
-    n.joint.x += d[0] * m.amp * ctx.attack;
-    n.joint.y += d[1] * m.amp * ctx.attack;
+    n.joint.x += d[0] * (m.amp ?? 0) * ctx.attack;
+    n.joint.y += d[1] * (m.amp ?? 0) * ctx.attack;
   },
   // приціл: кут задає гра
   aim(n, m, t, ctx) {
@@ -56,7 +80,7 @@ const MODS = {
   },
 };
 
-function gateOf(m, ctx) {
+function gateOf(m: Mod, ctx: Ctx): number {
   switch (m.on) {
     case 'walk': return ctx.moving ? 1 : 0;
     case 'attack': return ctx.attack;
@@ -67,14 +91,19 @@ function gateOf(m, ctx) {
 }
 
 /**
- * @param {object} def   риг із rigs.json
- * @param {Map} textures маски частин
- * @param {object} parts parts.json — потрібні розміри в клітинках
- * @param {object} look  палітра
+ * @param def      риг із rigs.json
+ * @param textures маски частин
+ * @param parts    звідки брати розміри в клітинках. Сюди приходить і parts.json
+ *                 (вороги, база, декор), і каталог деталей башт — спільне в них
+ *                 лише size, тому в сигнатурі саме воно, а не конкретний тип.
+ * @param look     палітра
  */
-export function buildRig(def, textures, parts, look) {
+export function buildRig(
+  def: RigDef, textures: Map<string, Texture>,
+  parts: Record<string, { size: Vec2 }>, look: Look,
+): Rig {
   const view = new Container();
-  const nodes = [];
+  const nodes: Node[] = [];
 
   for (const p of def.parts) {
     const tex = textures.get(p.part);
@@ -90,7 +119,7 @@ export function buildRig(def, textures, parts, look) {
     const spr = new Sprite(tex);
     spr.anchor.set(p.pivot?.[0] ?? 0.5, p.pivot?.[1] ?? 0.5);
     spr.setSize(size[0], size[1]);
-    spr.tint = look.pens[p.pen] ?? look.pens.blue;
+    spr.tint = (p.pen && look.pens[p.pen]) ?? look.pens.blue;
     joint.addChild(spr);
 
     const parent = p.parent != null ? nodes[p.parent]?.joint ?? view : view;
@@ -105,16 +134,16 @@ export function buildRig(def, textures, parts, look) {
     });
   }
 
-  const ctx = { moving: false, attack: 0, hit: 0, dead: false, aim: null };
+  const ctx: Ctx = { moving: false, attack: 0, hit: 0, dead: false, aim: null };
   let t = Math.random() * 10;
-  let attackDur = 0.28, hitDur = 0.22;
+  const attackDur = 0.28, hitDur = 0.22;
 
   return {
     view,
     hitbox: def.hitbox ?? [1, 1],
 
     /** Позиція якоря в одиницях світу відносно початку рига (з урахуванням масштабу). */
-    anchor(name) {
+    anchor(name): Vec2 {
       const a = def.anchors?.[name] ?? [0, 0];
       return [a[0] * view.scale.x, a[1] * view.scale.y];
     },
@@ -122,9 +151,9 @@ export function buildRig(def, textures, parts, look) {
     /** Масштаб малюнка: у тісних орієнтаціях спрайт більший за свій хітбокс. */
     setScale(s) { view.scale.set(s); },
 
-    set moving(v) { ctx.moving = v; },
-    set aim(v) { ctx.aim = v; },
-    set dead(v) { ctx.dead = v; },
+    set moving(v: boolean) { ctx.moving = v; },
+    set aim(v: number | null) { ctx.aim = v; },
+    set dead(v: boolean) { ctx.dead = v; },
 
     fire(what) {
       if (what === 'attack') ctx.attack = 1;

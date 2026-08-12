@@ -3,22 +3,46 @@
 //
 // Башти 2×2 ставляться лише тапом: тягнути ними означало б сипати їх пачкою.
 
-import { Graphics } from '../lib/pixi.min.mjs';
-import { KINDS } from './game.js';
-import { lineCells } from './grid.js';
+import { Application, Container, Graphics } from '../../lib/pixi.min.mjs';
+import { KINDS } from '../game.js';
+import { lineCells } from '../model/grid.js';
+import type { Game } from '../game.js';
+import type { Hud } from './hud.js';
+import type { Layout, Look, Vec2 } from '../types.js';
 
-export function createTools({ app, canvas, world, layout, game, look, hud, blocked, onTower }) {
+export interface ToolsOpts {
+  app: Application;
+  canvas: HTMLCanvasElement;
+  world: Container;
+  layout: Layout;
+  game: Game;
+  look: Look;
+  hud?: Hud;
+  /** поки відкрита рамка обведення або майстерня, поле не приймає ввід */
+  blocked?: () => boolean;
+  /** тап по вже поставленій башті: true — подію забрали */
+  onTower?: (cx: number, cy: number) => boolean;
+}
+
+export interface Tools {
+  readonly tool: string;
+  setTool(t: string): void;
+}
+
+export function createTools({
+  app, canvas, world, layout, game, look, hud, blocked, onTower,
+}: ToolsOpts): Tools {
   const ghost = new Graphics();
   world.addChild(ghost);
 
   let tool = 'wall';
   let drawing = false;
-  let hover = null;
-  let last = null; // остання клітинка риски
-  const strokeSeen = new Set();
+  let hover: Vec2 | null = null;
+  let last: Vec2 | null = null; // остання клітинка риски
+  const strokeSeen = new Set<string>();
 
   /** Екранні пікселі рушія: канвас може бути розтягнутий CSS-ом. */
-  function screenAt(ev) {
+  function screenAt(ev: PointerEvent): Vec2 {
     const r = canvas.getBoundingClientRect();
     return [
       (ev.clientX - r.left) * (app.screen.width / r.width),
@@ -27,14 +51,14 @@ export function createTools({ app, canvas, world, layout, game, look, hud, block
   }
 
   /** Клітинка під вказівником. Для 2×2 центруємо фігуру на пальці. */
-  function cellAt(ev, w = 1, h = 1) {
+  function cellAt(ev: PointerEvent, w = 1, h = 1): Vec2 {
     const [px, py] = screenAt(ev);
     const x = (px - layout.ox) / layout.cell;
     const y = (py - layout.oy) / layout.cell;
     return [Math.floor(x - w / 2 + 0.5), Math.floor(y - h / 2 + 0.5)];
   }
 
-  function setTool(t) {
+  function setTool(t: string) {
     tool = t;
     hud?.setTool(t);
     redrawGhost();
@@ -66,7 +90,7 @@ export function createTools({ app, canvas, world, layout, game, look, hud, block
     }
   }
 
-  function apply(cx, cy) {
+  function apply(cx: number, cy: number) {
     const key = `${cx},${cy}`;
     if (strokeSeen.has(key)) return;
     strokeSeen.add(key);
@@ -74,9 +98,14 @@ export function createTools({ app, canvas, world, layout, game, look, hud, block
     else game.build(tool, cx, cy);
   }
 
-  const size = () => (tool === 'eraser' ? [1, 1] : [KINDS[tool].w, KINDS[tool].h]);
+  /** Розмір сліду інструмента. Невідомий інструмент дає 1×1, а не падіння:
+   *  сюди приходить рядок, і єдина чесна відповідь на незнайомий — найменша. */
+  const size = (): Vec2 => {
+    const k = KINDS[tool];
+    return tool === 'eraser' || !k ? [1, 1] : [k.w, k.h];
+  };
 
-  function onDown(ev) {
+  function onDown(ev: PointerEvent) {
     if (blocked?.()) return; // поки відкрита рамка обведення, поле не чіпаємо
     ev.preventDefault();
     // Поля — не поле: тап по нотатках перемикає інструмент, а після кінця
@@ -95,11 +124,11 @@ export function createTools({ app, canvas, world, layout, game, look, hud, block
     redrawGhost();
   }
 
-  function onMove(ev) {
+  function onMove(ev: PointerEvent) {
     if (blocked?.()) return;
     hover = cellAt(ev, ...size());
     // Протягуванням малюємо лише те, що 1×1: стіни й стирання.
-    if (drawing && (tool === 'eraser' || KINDS[tool].w === 1)) {
+    if (drawing && last && (tool === 'eraser' || KINDS[tool]?.w === 1)) {
       for (const c of lineCells(last[0], last[1], hover[0], hover[1])) apply(...c);
       last = hover;
     }
@@ -125,7 +154,7 @@ export function createTools({ app, canvas, world, layout, game, look, hud, block
   canvas.addEventListener('pointerleave', onLeave);
 
   // Клавіші-дублери для десктопа: 1 стіна, 2 магічна, 3 гармата, E ластик.
-  const keys = { 1: 'wall', 2: 'magic_tower', 3: 'cannon', e: 'eraser', E: 'eraser' };
+  const keys: Record<string, string> = { 1: 'wall', 2: 'magic_tower', 3: 'cannon', e: 'eraser', E: 'eraser' };
   window.addEventListener('keydown', (ev) => {
     const t = keys[ev.key];
     if (t) setTool(t);

@@ -4,19 +4,31 @@
 // Головна ідея: клітинка НЕ ідеальна. Кожна лінія має власний зсув, натиск,
 // хвилю і подекуди розрив — саме це відрізняє зошит від CSS-сітки.
 
-import { Container, Sprite, Texture, TilingSprite } from '../lib/pixi.min.mjs';
+import { Application, Container, Sprite, Texture, TilingSprite } from '../../lib/pixi.min.mjs';
+import type { Layout, Look, Vec2 } from '../types.js';
 
-const rnd = (a, b) => a + Math.random() * (b - a);
+export interface Paper {
+  /** папір + клітинка (під чорнилом) */
+  base: Container;
+  /** загин, зерно, віньєтка (над чорнилом) */
+  overlay: Container;
+  resize(layout: Layout): void;
+  tick(dtMs: number): void;
+}
 
-function canvas2d(w, h) {
+const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+
+/** Тапл, а не масив: інакше кожне `g.fillStyle` нижче — помилка, бо контекст
+ *  виводиться як HTMLCanvasElement | CanvasRenderingContext2D | null. */
+function canvas2d(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const c = document.createElement('canvas');
   c.width = Math.max(1, Math.ceil(w));
   c.height = Math.max(1, Math.ceil(h));
-  return [c, c.getContext('2d')];
+  return [c, c.getContext('2d')!];
 }
 
 // --- аркуш: тон, плями, тінь від згину, загнутий кут -----------------------
-function paintSheet(w, h, dpr, look) {
+function paintSheet(w: number, h: number, dpr: number, look: Look) {
   const p = look.paper;
   const [c, g] = canvas2d(w * dpr, h * dpr);
   const W = c.width, H = c.height;
@@ -52,7 +64,7 @@ function paintSheet(w, h, dpr, look) {
 }
 
 // Загнутий правий нижній кут — малюємо поверх усього, разом із тінню.
-function paintCurl(w, h, dpr, look) {
+function paintCurl(w: number, h: number, dpr: number, look: Look) {
   const [c, g] = canvas2d(w * dpr, h * dpr);
   if (!look.paper.curl) return c;
   const W = c.width, H = c.height;
@@ -97,7 +109,10 @@ function paintCurl(w, h, dpr, look) {
 // Друкована сітка майже рівна: власний зсув і натиск на лінію, повільна хвиля
 // вздовж неї, місцями бліді ділянки (нерівномірний прокат друку) і дуже рідко
 // справжній розрив. Рукотворність дає чорнило, а не папір — тут стримано.
-function penLine(g, base, horizontal, len, look, dpr) {
+function penLine(
+  g: CanvasRenderingContext2D, base: number, horizontal: boolean,
+  len: number, look: Look, dpr: number,
+) {
   const cfg = look.grid;
   const wob = cfg.wobble * dpr;
   const phase = rnd(0, Math.PI * 2);
@@ -108,7 +123,7 @@ function penLine(g, base, horizontal, len, look, dpr) {
 
   g.lineWidth = cfg.width * dpr * rnd(0.85, 1.15);
 
-  const at = (t) => {
+  const at = (t: number): Vec2 => {
     const off = drift + Math.sin(phase + t * freq) * wob;
     return horizontal ? [t, base + off] : [base + off, t];
   };
@@ -125,7 +140,7 @@ function penLine(g, base, horizontal, len, look, dpr) {
   }
 }
 
-function paintGrid(w, h, dpr, layout, look) {
+function paintGrid(w: number, h: number, dpr: number, layout: Layout, look: Look) {
   const [c, g] = canvas2d(w * dpr, h * dpr);
   const W = c.width, H = c.height;
   const cell = layout.cell * dpr;
@@ -166,7 +181,7 @@ function paintGrid(w, h, dpr, layout, look) {
 }
 
 // --- зерно й віньєтка (лежать ПОВЕРХ чорнила) -----------------------------
-function grainTexture(dpr) {
+function grainTexture(dpr: number) {
   const size = 128;
   const [c, g] = canvas2d(size, size);
   const img = g.createImageData(size, size);
@@ -179,7 +194,7 @@ function grainTexture(dpr) {
   return Texture.from(c);
 }
 
-function paintVignette(w, h, dpr, strength) {
+function paintVignette(w: number, h: number, dpr: number, strength: number) {
   const [c, g] = canvas2d(w * dpr, h * dpr);
   const W = c.width, H = c.height;
   const grd = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.32, W / 2, H / 2, Math.max(W, H) * 0.78);
@@ -194,7 +209,7 @@ function paintVignette(w, h, dpr, strength) {
  * base    — папір + клітинка (під чорнилом)
  * overlay — загин, зерно, віньєтка (над чорнилом)
  */
-export function createPaper(app, look) {
+export function createPaper(app: Application, look: Look): Paper {
   const base = new Container();
   const overlay = new Container();
 
@@ -210,7 +225,7 @@ export function createPaper(app, look) {
   vignette.blendMode = 'multiply';
   overlay.addChild(curl, grain, vignette);
 
-  const swap = (sprite, canvas, w, h) => {
+  const swap = (sprite: Sprite, canvas: HTMLCanvasElement, w: number, h: number) => {
     const old = sprite.texture;
     sprite.texture = Texture.from(canvas);
     sprite.setSize(w, h);

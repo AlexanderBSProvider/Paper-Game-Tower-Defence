@@ -2,7 +2,7 @@
 // обводиш у рамці → деталь стискається на башту.
 //
 // Це місце, де скіл зустрічається з білдом. Куди поставити — вирішує гравець
-// (і від цього залежать стати, бо `build.js` рахує їх із геометрії), а як воно
+// (і від цього залежать стати, бо `build.ts` рахує їх із геометрії), а як воно
 // ляже на папір — вирішує його рука в рамці обведення.
 //
 // Час не спиняється. Домальовувати посеред хвилі можна, і це справжній вибір:
@@ -12,8 +12,57 @@
 // екранних пікселях (це поля аркуша, не поле бою), а місця кріплення — у
 // клітинках світу, бо вони прив'язані до башти.
 
-import { Container, Graphics } from '../lib/pixi.min.mjs';
-import { penStroke, penCircle, penRect, penText, textWidth } from './ink.js';
+import { Application, Container, Graphics } from '../../lib/pixi.min.mjs';
+import { penStroke, penCircle, penRect, penText, textWidth } from '../view/ink.js';
+import type { PenOpts } from '../view/ink.js';
+import type { Game, TowerRef } from '../game.js';
+import type { Socket } from '../model/build.js';
+import type { TracePad } from './tracepad.js';
+import type { Fx, Layout, Look, TowerPart, TowerParts, Vec2 } from '../types.js';
+
+/** Ескіз деталі на полях, в екранних пікселях. */
+interface ShelfSlot {
+  id: string;
+  part: TowerPart;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Деталь під пальцем. */
+interface Held {
+  id: string;
+  part: TowerPart;
+  px: number;
+  py: number;
+}
+
+export interface WorkshopOpts {
+  canvas: HTMLCanvasElement;
+  app: Application;
+  hudLayer: Container;
+  worldLayer: Container;
+  look: Look;
+  layout: Layout;
+  game: Game;
+  towerParts: TowerParts;
+  tracePad: TracePad;
+}
+
+export interface Workshop {
+  readonly open: boolean;
+  /** Дотик, який почався в майстерні, полю віддавати не можна навіть після
+   *  того, як майстерня закрилась. Про це питає `blocked` у tools. */
+  readonly busyPointer: boolean;
+  readonly tower: TowerRef | null;
+  readonly slots: ShelfSlot[];
+  readonly sockets: Socket[];
+  openAt(cx: number, cy: number): boolean;
+  close(): void;
+  resize(): void;
+  update(dt: number): void;
+}
 
 /** Скільки екранних пікселів «дотягується» палець до місця кріплення. */
 const SNAP = 46;
@@ -22,7 +71,7 @@ const SNAP = 46;
  * Розкладка панелі деталей у смузі полів.
  * Клітинку беремо якомога більшу — деталей небагато, а на телефоні смуга вузька.
  */
-export function shelfGrid(n, w, h) {
+export function shelfGrid(n: number, w: number, h: number) {
   let best = { cols: n, rows: 1, cell: 0 };
   for (let cols = 1; cols <= n; cols++) {
     const rows = Math.ceil(n / cols);
@@ -40,7 +89,7 @@ export function shelfGrid(n, w, h) {
  * З цієї ж смуги HUD пише номер хвилі, тому куток під нього лишаємо вільним:
  * два написи в одному місці на аркуші читаються як помарка.
  */
-export function shelfBand(L) {
+export function shelfBand(L: Layout) {
   const bottom = Math.max(L.oy, L.h * 0.1);
   const side = Math.max(L.ox, 0);
   return side > bottom
@@ -48,7 +97,9 @@ export function shelfBand(L) {
     : { x: 0, y: 0, w: L.w - bottom * 1.1, h: bottom, vertical: false };
 }
 
-export function createWorkshop({ canvas, app, hudLayer, worldLayer, look, layout, game, towerParts, tracePad }) {
+export function createWorkshop({
+  canvas, app, hudLayer, worldLayer, look, layout, game, towerParts, tracePad,
+}: WorkshopOpts): Workshop {
   // Деталі, які можна доставити. Заготовки сюди не потрапляють: вони не
   // чіпляються в сокет, з них башта починається.
   const shelf = Object.entries(towerParts.parts)
@@ -67,33 +118,38 @@ export function createWorkshop({ canvas, app, hudLayer, worldLayer, look, layout
   marks.visible = false;
   worldLayer.addChild(marks);
 
-  let tower = null;      // { id, kind, cx, cy, build, rig }
-  let slots = [];        // { id, part, x, y, w, h } екранні пікселі
-  let sockets = [];      // { node, name, x, y } клітинки світу
-  let held = null;       // { id, part, px, py } деталь під пальцем
-  let snap = null;       // місце кріплення, до якого дотягнулись
-  let busy = false;      // відкрита рамка обведення або летить деталь
-  let swallowing = false; // цей дотик належить майстерні, поле його не бачить
-  const anims = [];
+  let tower: TowerRef | null = null;
+  let slots: ShelfSlot[] = [];    // екранні пікселі
+  let sockets: Socket[] = [];     // клітинки світу
+  let held: Held | null = null;   // деталь під пальцем
+  let snap: Socket | null = null; // місце кріплення, до якого дотягнулись
+  let busy = false;               // відкрита рамка обведення або летить деталь
+  let swallowing = false;         // цей дотик належить майстерні, поле його не бачить
+  const anims: Fx[] = [];
 
-  const affordable = (part) => game.wallet.ink >= (part.cost ?? 0);
-  const toScreenX = (cx) => layout.ox + cx * layout.cell;
-  const toScreenY = (cy) => layout.oy + cy * layout.cell;
+  const affordable = (part: TowerPart) => game.wallet.ink >= (part.cost ?? 0);
+  const toScreenX = (cx: number) => layout.ox + cx * layout.cell;
+  const toScreenY = (cy: number) => layout.oy + cy * layout.cell;
 
-  /** Місця кріплення в клітинках світу: склад рахує їх від підошви башти. */
-  function readSockets() {
-    const [fx, fy] = game.footOf(tower.cx, tower.cy, game.KINDS[tower.kind]);
+  /** Місця кріплення в клітинках світу: склад рахує їх від підошви башти.
+   *  Башту беремо параметром, а не із замикання: викликається лише тоді, коли
+   *  вона точно є, і так це видно з сигнатури. */
+  function readSockets(t: TowerRef): Socket[] {
+    const [fx, fy] = game.footOf(t.cx, t.cy, game.KINDS[t.kind]!);
     const s = layout.spriteScale;
-    return tower.build.freeSockets().map((k) => ({ ...k, x: fx + k.x * s, y: fy + k.y * s }));
+    return t.build!.freeSockets().map((k) => ({ ...k, x: fx + k.x * s, y: fy + k.y * s }));
   }
 
   // --- малювання -----------------------------------------------------------
 
   /** Ескіз деталі: той самий контур, що гравець потім обводитиме. */
-  function sketch(g, part, cx, cy, size, o = {}) {
+  function sketch(
+    g: Graphics, part: TowerPart,
+    cx: number, cy: number, size: number, o: PenOpts = {},
+  ) {
     const w = size, h = size;
     for (const s of part.outline) {
-      penStroke(g, s.map(([x, y]) => [cx + (x - 0.5) * w, cy + (y - 0.5) * h]), {
+      penStroke(g, s.map(([x, y]): Vec2 => [cx + (x - 0.5) * w, cy + (y - 0.5) * h]), {
         color: look.pens.blue, width: size * 0.05, alpha: 0.85,
         jitter: size * 0.006, step: size * 0.16, overshoot: size * 0.02, halo: 0.12, ...o,
       });
@@ -161,12 +217,12 @@ export function createWorkshop({ canvas, app, hudLayer, worldLayer, look, layout
    * Це той самий малюнок, який щойно вела рука: не підміна спрайтом, а він
    * сам, тому момент читається як «моє стало на місце».
    */
-  function shrinkIn(strokes, toX, toY, then) {
+  function shrinkIn(strokes: Vec2[][], toX: number, toY: number, then: () => void) {
     const box = tracePad.box;
     const g = new Graphics();
     for (const s of strokes) {
       if (s.length < 2) continue;
-      penStroke(g, s.map(([x, y]) => [(x - 0.5) * box.side, (y - 0.5) * box.side]), {
+      penStroke(g, s.map(([x, y]): Vec2 => [(x - 0.5) * box.side, (y - 0.5) * box.side]), {
         color: look.pens.blue, width: box.side * 0.026, alpha: 0.9,
         jitter: box.side * 0.003, step: box.side * 0.045, overshoot: box.side * 0.006, halo: 0.14,
       });
@@ -197,7 +253,7 @@ export function createWorkshop({ canvas, app, hudLayer, worldLayer, look, layout
 
   // --- взаємодія -----------------------------------------------------------
 
-  const screenAt = (ev) => {
+  const screenAt = (ev: PointerEvent): Vec2 => {
     const r = canvas.getBoundingClientRect();
     return [
       (ev.clientX - r.left) * (app.screen.width / r.width),
@@ -205,11 +261,12 @@ export function createWorkshop({ canvas, app, hudLayer, worldLayer, look, layout
     ];
   };
 
-  const slotAt = (px, py) => slots.find((s) => px >= s.x && px <= s.x + s.w && py >= s.y && py <= s.y + s.h);
+  const slotAt = (px: number, py: number) =>
+    slots.find((s) => px >= s.x && px <= s.x + s.w && py >= s.y && py <= s.y + s.h);
 
   /** Найближче вільне місце кріплення, якщо палець дотягнувся. */
-  function nearestSocket(px, py) {
-    let best = null, bestD = SNAP;
+  function nearestSocket(px: number, py: number): Socket | null {
+    let best: Socket | null = null, bestD = SNAP;
     for (const k of sockets) {
       const d = Math.hypot(px - toScreenX(k.x), py - toScreenY(k.y));
       if (d < bestD) { best = k; bestD = d; }
@@ -217,7 +274,9 @@ export function createWorkshop({ canvas, app, hudLayer, worldLayer, look, layout
     return best;
   }
 
-  async function commit(part, socket) {
+  async function commit(partId: string, part: TowerPart, socket: Socket) {
+    const t = tower;
+    if (!t) return;
     busy = true;
     held = null;
     snap = null;
@@ -229,18 +288,18 @@ export function createWorkshop({ canvas, app, hudLayer, worldLayer, look, layout
 
     const x = toScreenX(socket.x), y = toScreenY(socket.y);
     shrinkIn(traced.strokes, x, y, () => {
-      const res = game.addPart(tower.id, part.id, { node: socket.node, name: socket.name }, traced.quality);
+      const res = game.addPart(t.id, partId, { node: socket.node, name: socket.name }, traced.quality);
       busy = false;
       if (!res.ok) return;
       // Риг перезібрано — беремо новий і перечитуємо, куди тепер можна ставити.
-      tower = game.towerAt(tower.cx, tower.cy);
-      sockets = tower ? readSockets() : [];
+      tower = game.towerAt(t.cx, t.cy);
+      sockets = tower ? readSockets(tower) : [];
       drawMarks();
       drawPanel();
     });
   }
 
-  function onDown(ev) {
+  function onDown(ev: PointerEvent) {
     if (!screen.visible) return;
     // Дотик належить майстерні від початку й до кінця, навіть якщо ми ним нічого
     // не робимо. Інакше тап, яким майстерню закрили, доїжджає до поля вже після
@@ -260,12 +319,13 @@ export function createWorkshop({ canvas, app, hudLayer, worldLayer, look, layout
       return;
     }
     // Тап повз панель і повз саму башту — закрили майстерню.
+    if (!tower) return;
     const cx = (px - layout.ox) / layout.cell, cy = (py - layout.oy) / layout.cell;
-    const k = game.KINDS[tower.kind];
+    const k = game.KINDS[tower.kind]!;
     if (cx < tower.cx || cx > tower.cx + k.w || cy < tower.cy || cy > tower.cy + k.h) close();
   }
 
-  function onMove(ev) {
+  function onMove(ev: PointerEvent) {
     if (!held || busy) return;
     const [px, py] = screenAt(ev);
     held.px = px; held.py = py;
@@ -279,7 +339,7 @@ export function createWorkshop({ canvas, app, hudLayer, worldLayer, look, layout
     if (!held || busy) return;
     const part = held.part, id = held.id, socket = snap;
     if (!socket) { held = null; snap = null; drawHeld(); drawMarks(); return; }
-    commit({ ...part, id }, socket);
+    commit(id, part, socket);
   }
 
   canvas.addEventListener('pointerdown', onDown);
@@ -303,8 +363,6 @@ export function createWorkshop({ canvas, app, hudLayer, worldLayer, look, layout
 
   return {
     get open() { return screen.visible; },
-    /** Дотик, який почався в майстерні, полю віддавати не можна навіть після
-     *  того, як майстерня закрилась. Про це питає `blocked` у tools. */
     get busyPointer() { return swallowing; },
     get tower() { return tower; },
     // Прев'ю не дає надійного кадру, тому геймплей перевіряється числами:
@@ -312,12 +370,12 @@ export function createWorkshop({ canvas, app, hudLayer, worldLayer, look, layout
     get slots() { return slots; },
     get sockets() { return sockets; },
 
-    /** @param {number} cx @param {number} cy клітинка, по якій тапнули */
+    /** @param cx @param cy клітинка, по якій тапнули */
     openAt(cx, cy) {
       const t = game.towerAt(cx, cy);
       if (!t) return false;
       tower = t;
-      sockets = readSockets();
+      sockets = readSockets(t);
       if (!sockets.length) { tower = null; return false; } // ставити нема куди
       layoutShelf();
       drawPanel();
@@ -330,9 +388,9 @@ export function createWorkshop({ canvas, app, hudLayer, worldLayer, look, layout
     close,
 
     resize() {
-      if (!screen.visible) return;
+      if (!screen.visible || !tower) return;
       layoutShelf();
-      sockets = readSockets();
+      sockets = readSockets(tower);
       drawPanel();
       drawMarks();
     },
