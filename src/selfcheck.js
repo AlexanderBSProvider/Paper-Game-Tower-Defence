@@ -11,6 +11,7 @@ import { computeFlow, reaches, stepFrom, routeFrom, simplify, wouldSeal } from '
 import { createWallet } from './economy.js';
 import { makeTemplate, scoreTrace, magnetize, resample, nearestOn } from './trace.js';
 import { createBuild, qualityMul, gunOf } from './build.js';
+import { chainTargets, oppositeTarget } from './aim.js';
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
@@ -544,6 +545,45 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
   assert.equal(mk('cannon').projectile, 'ball');
   assert.equal(mk('magic_tower').projectile, 'bolt');
   assert.ok(mk('cannon').damage > 0 && mk('magic_tower').damage > 0);
+}
+
+// --- вибір цілей для комбо -------------------------------------------------
+{
+  const at = (x, y) => ({ x, y });
+
+  // Ланцюг тягнеться крізь натовп: другий стрибок рахується від першої жертви,
+  // а не від точки влучання. b далеко від старту, але поруч із a.
+  {
+    const a = at(1, 0), b = at(2.2, 0), far = at(0, 1.4);
+    const chain = chainTargets(0, 0, [a, b, far], 1.5, 2);
+    assert.deepEqual(chain, [a, b], 'ланцюг має йти a → b, а не зіркою з нуля');
+  }
+
+  // Радіус обрізає, повторів не буває, exclude поважається
+  {
+    const a = at(1, 0), b = at(9, 0);
+    assert.deepEqual(chainTargets(0, 0, [a, b], 1.5, 3), [a]);
+    assert.deepEqual(chainTargets(0, 0, [a], 1.5, 3, [a]), []);
+    assert.deepEqual(chainTargets(0, 0, [], 1.5, 3), []);
+    assert.deepEqual(chainTargets(0, 0, [a], 1.5, 0), []);
+  }
+
+  // Кількість стрибків обмежена саме count
+  {
+    const line = [at(1, 0), at(2, 0), at(3, 0), at(4, 0)];
+    assert.equal(chainTargets(0, 0, line, 1.5, 2).length, 2);
+    assert.equal(chainTargets(0, 0, line, 1.5, 99).length, 4);
+  }
+
+  // Другий ствол б'є в інший бік, а не вдруге по тій самій цілі
+  {
+    const first = at(3, 0), sameSide = at(2, 0), other = at(-2, 0), farOther = at(-9, 0);
+    const rank = (e) => Math.abs(e.x);
+    assert.equal(oppositeTarget(0, 0, first, [first, sameSide, other], 5, rank), other);
+    assert.equal(oppositeTarget(0, 0, first, [first, sameSide], 5, rank), null,
+      'позаду нікого — другого пострілу немає');
+    assert.equal(oppositeTarget(0, 0, first, [first, farOther], 5, rank), null, 'за радіусом');
+  }
 }
 
 console.log('selfcheck: ok');

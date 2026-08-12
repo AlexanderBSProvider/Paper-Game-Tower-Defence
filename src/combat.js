@@ -10,6 +10,7 @@
 
 import { Container, Graphics } from '../lib/pixi.min.mjs';
 import { penStroke, penCircle, penText, textWidth, hatch, scribble } from './ink.js';
+import { chainTargets, oppositeTarget } from './aim.js';
 
 /** Снаряд магії — коротка риска з іскрою на вістрі. */
 function drawBolt(g, look) {
@@ -141,6 +142,24 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
     });
   }
 
+  /** Молнія рикошету: затухаюча лінія від одної цілі до наступної. */
+  function zap(x1, y1, x2, y2) {
+    const g = new Graphics();
+    penStroke(g, [[x1, y1], [x2, y2]],
+      { color: look.pens.blue, width: 0.12, alpha: 0.8, jitter: 0.05, step: 0.25, overshoot: 0.05, halo: 0.25 });
+    layer.addChild(g);
+    fx.push({
+      t: 0,
+      step(dt) {
+        this.t += dt;
+        g.alpha = Math.max(0, 0.8 - this.t / 0.3);
+        if (this.t < 0.3) return false;
+        g.destroy();
+        return true;
+      },
+    });
+  }
+
   // --- постріл -------------------------------------------------------------
   function hit(s) {
     const [x, y] = [s.x, s.y];
@@ -157,6 +176,17 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
       if (enemies.includes(s.target)) {
         number(s.target.x, s.target.y - 2, s.dmg);
         if (damage(s.target, s.dmg)) strikeOut(s.target.x, s.target.y, 1.2, 1.5);
+        // Рикошет: ланцюг прострілу крізь натовп
+        if (s.ric > 0) {
+          const chain = chainTargets(s.target.x, s.target.y, enemies, 2.5, s.ric, [s.target]);
+          let prev = s.target, dmg = s.dmg * 0.6;
+          for (const e of chain) {
+            zap(prev.x, prev.y, e.x, e.y);
+            number(e.x, e.y - 2, dmg);
+            if (damage(e, dmg)) strikeOut(e.x, e.y, 1.2, 1.5);
+            prev = e; dmg *= 0.6;
+          }
+        }
       }
     }
     s.g.destroy();
@@ -167,9 +197,9 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
     const ang = Math.atan2(target.y - 0.5 - (t.y - 0.5), target.x - t.x);
     const g = new Graphics();
     const s = {
-      g, dmg: d.damage, splash: d.splash ?? 0, speed: d.speed,
+      g, dmg: d.damage, splash: d.splash ?? 0, speed: d.speed, ric: d.ricochet ?? 0,
       x: t.x + Math.cos(ang) * 0.8, y: t.y - 0.5 + Math.sin(ang) * 0.8,
-      target, arc: d.projectile === 'ball',
+      target, arc: d.projectile === 'ball', tower: t,
     };
 
     if (s.arc) {
@@ -221,13 +251,27 @@ export function createCombat({ layer, look, enemies, damage, distOf }) {
       for (let i = fx.length - 1; i >= 0; i--) if (fx[i].step(dt)) fx.splice(i, 1);
       return;
     }
+    // Сповільнення від страху: кожен кадр скидається, потім застосовуються активні ефекти
+    for (const e of enemies) e.slow = 0;
     for (const t of towers.values()) {
+      // Страх: усім ворогам у радіусі зменшити швидкість
+      if (t.def.fear) {
+        for (const e of enemies) {
+          const d = Math.hypot(e.x - t.x, e.y - t.y);
+          if (d <= t.def.range) e.slow = Math.max(e.slow ?? 0, t.def.fear);
+        }
+      }
       t.cd -= dt;
       const target = pick(t);
       if (!target) { t.rig.aim = null; continue; }
       if (t.cd > 0) continue;
       t.cd = 1 / t.def.rate;
       shoot(t, target);
+      // Другий ствол: стріляє в іншу ціль
+      if (t.def.twoWay) {
+        const other = oppositeTarget(t.x, t.y, target, enemies, t.def.range, (e) => distOf(e));
+        if (other) shoot(t, other);
+      }
     }
 
     for (let i = shots.length - 1; i >= 0; i--) {

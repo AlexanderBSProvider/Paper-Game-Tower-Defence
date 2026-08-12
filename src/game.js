@@ -4,7 +4,7 @@
 // а не пікселі: світ масштабується разом із екраном, лінія лишається лінією.
 
 import { Container, Graphics } from '../lib/pixi.min.mjs';
-import { penStroke, penRect, hatch } from './ink.js';
+import { penStroke, penRect, hatch, penText, textWidth } from './ink.js';
 import { buildPath, posAt } from './pathmath.js';
 import { createGrid, WALL, TOWER, DECOR, BASE } from './grid.js';
 import { computeFlow, routeFrom, stepFrom, reaches, wouldSeal } from './flow.js';
@@ -58,7 +58,7 @@ function drawWall(g, cx, cy, look) {
     { ...PEN, color: look.pens.blue, width: 0.03, alpha: 0.35, halo: 0 });
 }
 
-export function createGame({ world, look, level, balance, rigDefs, parts, textures, layout, towerParts, partTex }) {
+export function createGame({ world, hud, look, level, balance, rigDefs, parts, textures, layout, towerParts, partTex }) {
   const grid = createGrid(look.core.cols, look.core.rows);
   const wallet = createWallet({
     start: balance.economy.startInk,
@@ -132,6 +132,52 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
         if (p < 1) return false;
         g.destroy();
         return true;
+      },
+    });
+  }
+
+  // --- нотатка про деталь на полях -------------------------------------------
+  function showNote(stats, newCombos) {
+    const g = new Graphics();
+    hud.addChild(g);
+
+    const size = 8;
+    const x = layout.w - size * 3;
+    const y = layout.h - size * 4;
+
+    // Показуємо основні стати
+    const rows = [];
+    if (stats.range > 0) rows.push({ icon: '●', val: stats.range.toFixed(1) });
+    if (stats.damage > 0) rows.push({ icon: '▼', val: stats.damage.toFixed(0) });
+    if (stats.rate > 0 && stats.rate !== 1) rows.push({ icon: '◯', val: stats.rate.toFixed(1) });
+    if (stats.splash > 0) rows.push({ icon: '◎', val: stats.splash.toFixed(1) });
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      penText(g, row.icon, x, y + i * size * 0.6, size,
+        { color: look.pens.blue, alpha: 0.8, width: size * 0.08 });
+      penText(g, row.val, x + size * 0.6, y + i * size * 0.6, size,
+        { color: look.pens.blue, alpha: 0.8, width: size * 0.08 });
+    }
+
+    // Нові комбо як вспишка
+    if (newCombos.length) {
+      const comboText = `+${newCombos.length}`;
+      penText(g, comboText, x - size * 0.6, y - size, size * 1.2,
+        { color: look.pens.green, alpha: 0.9, width: size * 0.12 });
+    }
+
+    fx.push({
+      t: 0,
+      step(dt) {
+        this.t += dt;
+        if (this.t < 3) g.alpha = 1;
+        else if (this.t < 4) g.alpha = Math.max(0, 1 - (this.t - 3));
+        else {
+          g.destroy();
+          return true;
+        }
+        return false;
       },
     });
   }
@@ -241,6 +287,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
     const item = built.get(towerId);
     if (!item?.build) return { ok: false, reason: 'це не башта' };
 
+    const oldCombos = item.build.stats().combos ?? [];
     const res = item.build.add(partId, at, quality);
     if (!res.ok) return res;
 
@@ -255,8 +302,12 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
     const k = KINDS[item.kind];
     unplace(item.rig);
     item.rig = placeBuild(item.build, ...footOf(item.cx, item.cy, k));
-    combat.retune(towerId, gunOf(item.build.stats(), balance.projectiles), item.rig);
-    return { ok: true, id: res.id, spent: price, stats: item.build.stats() };
+    const newStats = item.build.stats();
+    const newCombos = newStats.combos ?? [];
+    const freshCombos = newCombos.filter((c) => !oldCombos.includes(c));
+    combat.retune(towerId, gunOf(newStats, balance.projectiles), item.rig);
+    if (freshCombos.length || newStats.damage > 0) showNote(newStats, freshCombos);
+    return { ok: true, id: res.id, spent: price, stats: newStats };
   }
 
   /** Радіус заготовки — те, що показує привид під пальцем ще до постановки.
@@ -402,7 +453,7 @@ export function createGame({ world, look, level, balance, rigDefs, parts, textur
       updateWaves(dt);
 
       for (const e of [...enemies]) {
-        advance(e, e.def.speed * dt);
+        advance(e, e.def.speed * (1 - (e.slow ?? 0)) * dt);
         if (!enemies.includes(e)) continue;
         e.rig.view.position.set(e.x, e.y);
         e.rig.moving = true;

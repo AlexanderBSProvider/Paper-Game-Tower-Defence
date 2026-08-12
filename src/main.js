@@ -65,7 +65,7 @@ app.stage.addChild(paper.base, world, paper.overlay, hud, padSheet, pad, boil.sp
 const textures = bakeParts(app.renderer, parts, look);
 const partTex = bakeCatalogue(app.renderer, towerParts.parts, look);
 const game = createGame({
-  world, look, level, balance, rigDefs, parts, textures, layout,
+  world, hud, look, level, balance, rigDefs, parts, textures, layout,
   towerParts, partTex,
 });
 // ponytail: рестарт через перезавантаження — стан гри ніде не лишається, а
