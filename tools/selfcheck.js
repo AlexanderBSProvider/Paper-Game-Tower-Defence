@@ -19,6 +19,8 @@ import { createWallet } from '../dist/model/economy.js';
 import { makeTemplate, scoreTrace, magnetize, resample, nearestOn } from '../dist/model/trace.js';
 import { createBuild, qualityMul, gunOf } from '../dist/model/build.js';
 import { chainTargets, oppositeTarget } from '../dist/model/aim.js';
+import { rowY, rowOf, rowHeight } from '../dist/model/lane.js';
+import { createSquad } from '../dist/model/squad.js';
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
@@ -624,6 +626,220 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
       'позаду нікого — другого пострілу немає');
     assert.equal(oppositeTarget(0, 0, first, [first, farOther], 5, rank), null, 'за радіусом');
   }
+}
+
+// --- lane mode: геометрія рядів --------------------------------------------
+{
+  const band = { y0: 2, y1: 10, rows: 4 };
+  near(rowHeight(band), 2);
+
+  // Центри рядів, а не межі: ворог іде посередині ряду.
+  near(rowY(band, 0), 3);
+  near(rowY(band, 3), 9);
+
+  // Зворотність — головне: якщо rowOf(rowY(r)) дасть інший ряд, союзник стане
+  // не туди, куди тапнули, і це не буде видно, поки хтось не програє через це.
+  for (let r = 0; r < band.rows; r++) {
+    assert.equal(rowOf(band, rowY(band, r)), r, `ряд ${r} не зворотний`);
+  }
+
+  // Межі рядів належать нижньому ряду, розривів немає.
+  assert.equal(rowOf(band, 2), 0, 'верхній край смуги — нульовий ряд');
+  assert.equal(rowOf(band, 3.99), 0);
+  assert.equal(rowOf(band, 4), 1, 'межа рядів іде в наступний ряд');
+
+  // Промах пальцем за смугу — крайній ряд, а не -1: інакше тап трохи вище
+  // поля мовчки нічого не робив би.
+  assert.equal(rowOf(band, -100), 0, 'вище смуги — перший ряд');
+  assert.equal(rowOf(band, 100), 3, 'нижче смуги — останній ряд');
+  assert.equal(rowY(band, -5), rowY(band, 0), 'ряд за межами затискається');
+  assert.equal(rowY(band, 99), rowY(band, 3));
+}
+
+// --- lane mode: загін -------------------------------------------------------
+{
+  const stats = { hp: 10, damage: 2, rate: 1, life: 10, range: 3, reach: 0.5 };
+  const mk = () => createSquad({
+    rows: 3, cols: 3, xLeft: 1, xRight: 5,
+    melee: stats, ranged: stats,
+  });
+
+  // Колонки рівномірні: тил біля вежі, передова праворуч.
+  {
+    const s = mk();
+    near(s.colX(0), 1);
+    near(s.colX(1), 3);
+    near(s.colX(2), 5);
+  }
+
+  // Мілі стає в передову, ренж — у тил. Порядок постановки не має значення:
+  // лінія збирається сама, інакше гравець мусив би думати про черговість.
+  {
+    const s = mk();
+    const a = s.add('ranged', 0, 1);
+    const b = s.add('melee', 0, 1);
+    assert.ok(a.ok && b.ok);
+    assert.equal(a.ally.col, 0, 'ренж — у тил');
+    assert.equal(b.ally.col, 2, 'мілі — на передову');
+
+    // Другий ренж займає наступну з тилу, а не будь-яку вільну.
+    const c = s.add('ranged', 0, 1);
+    assert.ok(c.ok);
+    assert.equal(c.ally.col, 1);
+  }
+
+  // Ряд повний → місце поступається НАЙСЛАБШИЙ за якістю, і саме його колонка
+  // дістається новому. Тут легко тихо взяти першого-ліпшого.
+  {
+    const s = mk();
+    s.add('melee', 0, 0.9);
+    const weak = s.add('melee', 0, 0.2);
+    s.add('melee', 0, 0.8);
+    assert.equal(s.allies.length, 3);
+
+    const r = s.add('melee', 0, 1);
+    assert.ok(r.ok);
+    assert.equal(r.replaced?.id, weak.ally.id, 'виштовхнули не найслабшого');
+    assert.equal(r.ally.col, weak.ally.col, 'новий не став на місце виштовханого');
+    assert.equal(s.allies.length, 3, 'коробка виросла понад норму');
+  }
+
+  // Ряди незалежні: повний нульовий не заважає першому.
+  {
+    const s = mk();
+    for (let i = 0; i < 3; i++) s.add('melee', 0, 1);
+    const r = s.add('melee', 1, 1);
+    assert.ok(r.ok);
+    assert.equal(r.replaced, null, 'вільний ряд не мав нікого виштовхувати');
+    assert.equal(s.allies.length, 4);
+  }
+
+  assert.equal(s2ok(mk().add('melee', 9, 1)), 'немає такого ряду');
+  assert.equal(s2ok(mk().add('melee', -1, 1)), 'немає такого ряду');
+
+  // blockerAt — те, через що ворог або йде далі, або спиняється.
+  {
+    const s = mk();
+    const front = s.add('melee', 0, 1).ally;   // col 2, x = 5
+    const back = s.add('melee', 0, 1).ally;    // col 1, x = 3
+    s.add('melee', 1, 1);                      // інший ряд — не має впливати
+    const shooter = s.add('ranged', 0, 1).ally; // col 0, x = 1
+
+    // Ворог праворуч від усіх: спиняє найправіший мілі, а не найближчий до вежі.
+    assert.equal(s.blockerAt(0, 9)?.id, front.id, 'блокує не передовий');
+    // Ворог уже проминув передового — далі його тримає наступний.
+    assert.equal(s.blockerAt(0, 4)?.id, back.id);
+    // Попереду лишився тільки ренжовий — він не блокує.
+    assert.equal(s.blockerAt(0, 2), null, 'ренжовий не має блокувати рух');
+    assert.notEqual(s.blockerAt(0, 9)?.id, shooter.id);
+    // Чужий ряд не рахується.
+    assert.equal(s.blockerAt(2, 9), null, 'блокувальник знайшовся не в тому ряду');
+  }
+
+  // Якість керує і живучістю, і тим, скільки протримається: недбалий силует
+  // згасає раніше за старанний. Це і є та ціна поспіху, на якій тримається бій.
+  {
+    const s = mk();
+    const sloppy = s.add('melee', 0, 0).ally;
+    const careful = s.add('melee', 1, 1).ally;
+    assert.ok(careful.maxLife > sloppy.maxLife, 'недбалий має в\'янути швидше');
+    assert.ok(careful.maxHp > sloppy.maxHp);
+    assert.ok(careful.damage > sloppy.damage);
+
+    // Згасання прибирає зі списку й повідомляє, кого саме — щоб хаб зняв риг.
+    const gone = s.tick(sloppy.maxLife + 0.01);
+    assert.equal(gone.length, 1);
+    assert.equal(gone[0].id, sloppy.id);
+    assert.ok(!s.allies.includes(sloppy));
+    assert.ok(s.allies.includes(careful), 'старанний згас разом із недбалим');
+  }
+
+  // Смерть від шкоди прибирає одразу, недобитий лишається.
+  {
+    const s = mk();
+    const a = s.add('melee', 0, 1).ally;
+    assert.equal(s.damage(a, 1), false);
+    assert.ok(s.allies.includes(a));
+    assert.equal(s.damage(a, 1e6), true);
+    assert.ok(!s.allies.includes(a), 'мертвий лишився в загоні');
+  }
+
+  // Ренжовий несе готовий Gun — combat.ts заводить його тим самим викликом,
+  // що й вежу. Без цього ренжові просто не стріляли б.
+  {
+    const s = mk();
+    const r = s.add('ranged', 0, 1).ally;
+    const m = s.add('melee', 0, 1).ally;
+    assert.ok(r.gun, 'ренжовий без гармати');
+    assert.ok(r.gun.damage > 0 && r.gun.range > 0);
+    assert.equal(m.gun, undefined, 'мілі не має бути гармати');
+  }
+}
+
+// --- lane mode: дані рівня й союзників --------------------------------------
+// Найтихіший спосіб зламати режим — перейменувати ключ у JSON: загін мовчки
+// візьме дефолти, і союзник стане слабшим, ніж задумано, без жодної помилки.
+{
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const LL = JSON.parse(readFileSync(root + 'data/laneLevel.json', 'utf8'));
+  const AL = JSON.parse(readFileSync(root + 'data/allies.json', 'utf8'));
+
+  // Геометрія рівня має бути осмисленою: вежа зліва, спавн справа, загін між ними.
+  assert.ok(LL.towerX < LL.squad.xLeft, 'загін стоїть позаду вежі');
+  assert.ok(LL.squad.xLeft < LL.squad.xRight, 'колонки загону переплутані');
+  assert.ok(LL.squad.xRight < LL.spawnX, 'передова колонка за точкою спавну');
+  assert.ok(LL.band.y0 < LL.band.y1, 'смуга рядів вивернута');
+  assert.ok(LL.rows >= 1);
+  assert.ok(LL.core.cols > LL.spawnX - 2, `ядро ${LL.core.cols} вужче за спавн ${LL.spawnX}`);
+
+  // Ряди мають лишатись у смузі та не злипатись.
+  const band = { y0: LL.band.y0, y1: LL.band.y1, rows: LL.rows };
+  assert.ok(rowHeight(band) >= 1, `ряд ${rowHeight(band)} клітинки — вороги зіллються`);
+  assert.ok(rowY(band, 0) > band.y0 && rowY(band, LL.rows - 1) < band.y1);
+  assert.ok(LL.band.y1 <= LL.core.rows, 'смуга рядів вилазить за ядро');
+
+  assert.ok(LL.waves.length, 'хвиль немає');
+  for (const [i, w] of LL.waves.entries()) {
+    assert.ok(w.count > 0 && w.every > 0, `хвиля ${i} порожня`);
+    assert.ok(w.row == null || (w.row >= 0 && w.row < LL.rows), `хвиля ${i}: ряду ${w.row} не існує`);
+  }
+
+  // Обидва типи союзників мають бути в каталозі — squad.ts шукає їх за іменем.
+  for (const kind of ['melee', 'ranged']) {
+    const d = AL[kind];
+    assert.ok(d, `у allies.json немає ${kind}`);
+    assert.ok(d.outline?.length, `${kind}: немає контуру`);
+    for (const [i, s] of d.outline.entries()) {
+      assert.ok(s.length >= 2, `${kind}: штрих ${i} з однієї точки`);
+      for (const [x, y] of s) {
+        assert.ok(x >= 0 && x <= 1 && y >= 0 && y <= 1,
+          `${kind}: точка (${x},${y}) поза коробкою 0..1 — обведення промахнеться повз рамку`);
+      }
+    }
+    assert.ok(d.stats.hp > 0 && d.stats.damage > 0 && d.stats.rate > 0 && d.stats.life > 0,
+      `${kind}: стати неповні`);
+    assert.ok(d.cost > 0, `${kind}: без ціни`);
+  }
+  assert.ok(AL.ranged.stats.range > 0, 'ренжовий без радіуса — стрілятиме впритул');
+  assert.ok(AL.melee.stats.reach > 0, 'мілі без reach — не зупинить нікого');
+
+  // Найголовніше: справжні дані справді дають робочий загін.
+  const squad = createSquad({
+    rows: LL.rows, cols: LL.squad.cols,
+    xLeft: LL.squad.xLeft, xRight: LL.squad.xRight,
+    melee: AL.melee.stats, ranged: AL.ranged.stats,
+  });
+  const m = squad.add('melee', 0, 1).ally;
+  const r = squad.add('ranged', 0, 1).ally;
+  assert.ok(m.hp > 0 && m.damage > 0 && m.reach > 0, 'мілі зібрався з дефолтів, а не з даних');
+  assert.ok(r.gun.range > 1, 'ренжовому не доїхав радіус із даних');
+  assert.ok(m.x > r.x, 'мілі має стояти попереду ренжового');
+  assert.equal(squad.blockerAt(0, LL.spawnX)?.id, m.id, 'мілі з даних не блокує');
+}
+
+/** Причина відмови add(), щоб не розписувати ok-перевірку щоразу. */
+function s2ok(r) {
+  return r.ok ? null : r.reason;
 }
 
 console.log('selfcheck: ok');
