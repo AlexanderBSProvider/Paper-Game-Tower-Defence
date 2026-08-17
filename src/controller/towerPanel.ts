@@ -13,6 +13,7 @@ import { Application, Container, Graphics } from '../../lib/pixi.min.mjs';
 import { penStroke, penCircle, penText, textWidth } from '../view/ink.js';
 import type { PenOpts } from '../view/ink.js';
 import type { LaneGame } from '../laneGame.js';
+import { canReink } from '../model/build.js';
 import type { Socket } from '../model/build.js';
 import type { TracePad } from './tracepad.js';
 import type { Fx, Layout, Look, TowerPart, TowerParts, Vec2 } from '../types.js';
@@ -54,6 +55,8 @@ export interface TowerPanel {
   readonly busyPointer: boolean;
   readonly slots: ShelfSlot[];
   readonly sockets: Socket[];
+  /** Яка деталь вежі під точкою екрана, або null. */
+  partAt(px: number, py: number): number | null;
   /** @returns чи взяли тап на себе */
   tapAt(px: number, py: number): boolean;
   close(): void;
@@ -268,6 +271,56 @@ export function createTowerPanel({
     return Math.abs(cx - game.towerX) <= hitPad && Math.abs(cy - game.towerY) <= h / 2;
   }
 
+  /**
+   * Яка деталь вежі під пальцем. Коробка рахується від піво́та, як у
+   * build.metrics(): у ствола він біля кріплення, а не внизу по центру, тож
+   * інакше палець промахувався б повз горизонтальні деталі.
+   */
+  function partAt(px: number, py: number) {
+    const cx = (px - layout.ox) / layout.cell;
+    const cy = (py - layout.oy) / layout.cell;
+    const s = layout.spriteScale;
+
+    let best: { id: number; d: number } | null = null;
+    for (const n of game.tower.nodes) {
+      const [w, h] = n.part.size;
+      const [pvx, pvy] = n.part.pivot ?? [0.5, 1];
+      const nx = game.towerX + n.x * s, ny = game.towerY + n.y * s;
+      const x0 = nx - w * pvx * s, y0 = ny - h * pvy * s;
+      if (!canReink(n)) continue; // тумбу підсилити нема чим — хай тап іде далі
+      if (cx < x0 || cx > x0 + w * s || cy < y0 || cy > y0 + h * s) continue;
+      // Деталі перекриваються, тому беремо ту, чий центр ближчий до пальця.
+      const d = Math.hypot(cx - (x0 + w * s / 2), cy - (y0 + h * s / 2));
+      if (!best || d < best.d) best = { id: n.id, d };
+    }
+    return best?.id ?? null;
+  }
+
+  /** Обвести поставлену деталь ще раз. Друга вісь росту: коли сокети скінчились,
+   *  сильнішати можна лише вглиб. */
+  async function reink(nodeId: number) {
+    const n = game.tower.nodes.find((k) => k.id === nodeId);
+    if (!n) return;
+    // Питаємо ДО рамки: інакше гравець обвів би контур і аж потім дізнався,
+    // що цю деталь підсилити не можна або що бракує чорнила.
+    if (!canReink(n)) return;
+    if (game.wallet.ink < game.reinkCost(nodeId)) return;
+    busy = true;
+
+    const traced = await tracePad.show(n.part.outline);
+    if (!traced) { busy = false; return; }
+
+    const s = layout.spriteScale;
+    shrinkIn(traced.strokes,
+      toScreenX(game.towerX + n.x * s), toScreenY(game.towerY + n.y * s), () => {
+        game.reinkPart(nodeId, traced.quality);
+        busy = false;
+        sockets = readSockets();
+        drawMarks();
+        drawPanel();
+      });
+  }
+
   function open(): boolean {
     sockets = readSockets();
     if (!sockets.length) return false; // ставити нема куди
@@ -337,7 +390,17 @@ export function createTowerPanel({
       drawHeld();
       return;
     }
-    // Тап повз полицю й повз саму вежу — закрили панель.
+
+    // Тап по вже поставленій деталі — переобведення. Це друга вісь росту, і
+    // саме вона працює тоді, коли ставити нове вже нікуди.
+    const node = partAt(px, py);
+    if (node != null) {
+      ev.preventDefault();
+      reink(node);
+      return;
+    }
+
+    // Тап повз полицю, повз деталі й повз саму вежу — закрили панель.
     if (!onTower(px, py)) close();
   }
 
@@ -372,6 +435,7 @@ export function createTowerPanel({
     // звідси тест бере, куди тикати синтетичним пальцем.
     get slots() { return slots; },
     get sockets() { return sockets; },
+    partAt,
 
     tapAt(px, py) {
       if (screen.visible) return true;

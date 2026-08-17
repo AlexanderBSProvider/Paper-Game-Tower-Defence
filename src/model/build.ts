@@ -25,6 +25,8 @@ export interface BuildNode {
   quality: number;
   x: number;
   y: number;
+  /** скільки разів деталь переобведено, 0..MAX_INK */
+  ink: number;
 }
 
 /** Вільне місце кріплення з абсолютними координатами. */
@@ -76,6 +78,45 @@ export type AddResult =
   | { ok: true; id: number }
   | { ok: false; reason: string };
 
+export type ReinkResult =
+  | { ok: true; ink: number }
+  | { ok: false; reason: string };
+
+/** Стеля переобведення: далі деталь не темнішає, щоб не перетворилась на пляму. */
+export const MAX_INK = 5;
+
+/**
+ * Множник від переобведення.
+ *
+ * Рівень 0 дає рівно 1.0, і це не випадковість: лабіринт ніколи не переобводить,
+ * тож його баланс лишається байт-у-байт тим самим. Уся вісь працює тільки там,
+ * де її вмикають.
+ */
+export const inkMul = (ink: number) => 1 + 0.15 * Math.min(Math.max(ink, 0), MAX_INK);
+
+/**
+ * Наскільки деталь підростає від переобведення.
+ *
+ * Одне джерело і для метрик, і для рига — інакше вони розійдуться, і
+ * намальоване перестане збігатись із порахованим.
+ *
+ * Через це переобведення має сенс і для деталей БЕЗ статів: заготовка не має
+ * чого множити через inkMul, зате підростає, а виміри силуету дають радіус.
+ * Без цього гравець платив би за переобведення тумби рівно нічого.
+ */
+export const inkScale = (ink: number) => 1 + 0.04 * Math.min(Math.max(ink, 0), MAX_INK);
+
+/**
+ * Чи є що підсилювати в цій деталі.
+ *
+ * Заготовка (тумба, бочка) статів не має — це кріплення, не зброя. Множити в
+ * неї нема чого, а inkScale дає лише мізер через виміри силуету, тож брати
+ * повну ціну за переобведення було б продажем порожнечі. UI питає це наперед,
+ * щоб не давати гравцеві обвести деталь і аж потім отримати відмову.
+ */
+export const canReink = (n: Pick<BuildNode, 'part' | 'ink'>) =>
+  n.ink < MAX_INK && Object.values(n.part.stats ?? {}).some((v) => (v ?? 0) > 0);
+
 export interface BuildCfg {
   base?: { rate?: number; range?: number };
   combos?: Combo[];
@@ -86,6 +127,8 @@ export interface Build {
   readonly nodes: BuildNode[];
   add(partId: string, at?: { node: number; name: string } | null, quality?: number): AddResult;
   remove(id: number): BuildNode[];
+  /** Обвести вже поставлену деталь ще раз: рівень +1, стати ростуть. */
+  reink(id: number, quality?: number): ReinkResult;
   freeSockets(): Socket[];
   metrics(): Metrics;
   stats(): Stats;
@@ -163,7 +206,7 @@ export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg 
 
     if (!at) {
       if (nodes.length) return { ok: false, reason: 'заготовка вже є' };
-      const n: BuildNode = { id: nextId++, partId, part, parent: null, socket: null, quality, x: 0, y: 0 };
+      const n: BuildNode = { id: nextId++, partId, part, parent: null, socket: null, quality, x: 0, y: 0, ink: 0 };
       nodes.push(n);
       return { ok: true, id: n.id };
     }
@@ -176,10 +219,33 @@ export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg 
 
     const n: BuildNode = {
       id: nextId++, partId, part, parent: host.id, socket: at.name, quality,
-      x: host.x + off[0], y: host.y + off[1],
+      x: host.x + off[0], y: host.y + off[1], ink: 0,
     };
     nodes.push(n);
     return { ok: true, id: n.id };
+  }
+
+  /**
+   * Обвести вже поставлену деталь ще раз.
+   *
+   * Це друга вісь росту, і без неї вежа впирається в стелю, щойно заповнено
+   * сокети: місця більше немає, а сильнішати нема куди. Тут місце не потрібне —
+   * росте те, що вже стоїть.
+   *
+   * @param quality якість переобведення; підмішується в наявну, а не заміняє —
+   *   одне недбале обведення не має знецінити старанну деталь, і навпаки.
+   */
+  function reink(id: number, quality = 1): ReinkResult {
+    const n = byId(id);
+    if (!n) return { ok: false, reason: 'немає такої деталі' };
+    if (n.ink >= MAX_INK) return { ok: false, reason: 'темніше вже нікуди' };
+    // Деталь без статів множити нема чого. inkScale дає їй мізерний приріст
+    // радіуса через виміри силуету (заміряно: +0.008 за рівень), і брати за це
+    // повну ціну було б продажем порожнечі. Заготовка — кріплення, не зброя.
+    if (!canReink(n)) return { ok: false, reason: 'цю деталь нема чим підсилити' };
+    n.ink++;
+    n.quality = (n.quality + clamp01(quality)) / 2;
+    return { ok: true, ink: n.ink };
   }
 
   /** Зняти деталь разом з усім, що на ній трималось. @returns знято */
@@ -205,7 +271,10 @@ export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg 
     let spikes = 0, round = 0, l = 0, r = 0;
 
     for (const n of nodes) {
-      const [w, h] = n.part.size;
+      // Переобведена деталь більша — і в метриках теж, бо саме такою її й
+      // намальовано (див. inkScale). Рівень 0 дає 1, тож лабіринт не зачеплено.
+      const grow = inkScale(n.ink);
+      const w = n.part.size[0] * grow, h = n.part.size[1] * grow;
       // Коробка рахується від піво́та деталі: у ствола він біля кріплення, а не
       // внизу по центру, інакше горизонтальна деталь «додавала б висоти».
       const [px, py] = n.part.pivot ?? [0.5, 1];
@@ -247,7 +316,7 @@ export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg 
   function stats(): Stats {
     const m = metrics();
     const sum = (key: keyof PartStats) => nodes.reduce(
-      (a, n) => a + (n.part.stats?.[key] ?? 0) * qualityMul(n.quality), 0,
+      (a, n) => a + (n.part.stats?.[key] ?? 0) * qualityMul(n.quality) * inkMul(n.ink), 0,
     );
 
     const out: Stats = {
@@ -290,6 +359,10 @@ export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg 
           pos: n.parent == null ? ([0, 0] as Vec2) : off,
           pivot: n.part.pivot ?? [0.5, 1],
           pen: n.part.pen ?? 'blue',
+          // Переобведене видно оком, а не лише в цифрах: деталь підростає.
+          // Той самий inkScale, що й у metrics() — щоб намальоване й пораховане
+          // не розійшлись.
+          scale: inkScale(n.ink),
           mods,
         };
       }),
@@ -298,7 +371,7 @@ export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg 
 
   return {
     nodes,
-    add, remove, freeSockets, metrics, stats, rigDef,
+    add, remove, reink, freeSockets, metrics, stats, rigDef,
     get empty() { return nodes.length === 0; },
   };
 }

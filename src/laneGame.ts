@@ -65,6 +65,10 @@ export type AddPartResult =
   | { ok: true; id: number; spent: number; stats: Stats }
   | { ok: false; reason: string };
 
+export type ReinkPartResult =
+  | { ok: true; id: number; ink: number; spent: number; stats: Stats }
+  | { ok: false; reason: string };
+
 export interface LaneGame {
   state: LaneState;
   wallet: Wallet;
@@ -77,12 +81,17 @@ export interface LaneGame {
   towerY: number;
   spawnEnemy(row?: number | null, typeId?: string, hpMul?: number): LaneEnemy;
   damage(e: Enemy, amount: number): boolean;
-  /** Домалювати деталь у сокет вежі — єдиний спосіб зробити її сильнішою. */
+  /** Домалювати деталь у сокет вежі. Перша вісь росту: вширшки. */
   addPart(
     partId: string,
     at: { node: number; name: string } | null,
     quality?: number,
   ): AddPartResult;
+  /** Обвести вже поставлену деталь ще раз. Друга вісь: вглибину. Працює й
+   *  тоді, коли всі сокети зайняті, — саме цим вежа не впирається в стелю. */
+  reinkPart(nodeId: number, quality?: number): ReinkPartResult;
+  /** Скільки коштує наступне переобведення цієї деталі. */
+  reinkCost(nodeId: number): number;
   update(dtMs: number): void;
   rescale(s: number): void;
   resize(): void;
@@ -237,6 +246,35 @@ export function createLaneGame({
     return { ok: true, id: res.id, spent: price, stats };
   }
 
+  /** Ціна наступного переобведення: що темніша деталь, то дорожче наступний
+   *  прохід. Інакше вигідно було б качати одну й ту саму до стелі. */
+  function reinkCost(nodeId: number): number {
+    const n = tower.nodes.find((k) => k.id === nodeId);
+    if (!n) return 0;
+    return Math.round((n.part.cost ?? 10) * (0.6 + 0.4 * n.ink));
+  }
+
+  /** Обвести поставлену деталь ще раз. Друга вісь росту вежі. */
+  function reinkPart(nodeId: number, quality = 1): ReinkPartResult {
+    const price = reinkCost(nodeId);
+    const res = tower.reink(nodeId, quality);
+    if (!res.ok) return res;
+
+    // Як і в addPart: платимо після того, як склад прийняв, інакше відмова
+    // «темніше вже нікуди» з'їдала б чорнило.
+    if (!wallet.pay(price)) {
+      const n = tower.nodes.find((k) => k.id === nodeId);
+      if (n) n.ink--; // відкат рівня; якість лишається змішаною, це не критично
+      return { ok: false, reason: 'мало чорнила' };
+    }
+
+    unplace(towerRig);
+    towerRig = placeBuild(tower, towerX, towerY);
+    const stats = tower.stats();
+    combat.retune(TOWER_ID, gunOf(stats, balance.projectiles), towerRig);
+    return { ok: true, id: nodeId, ink: res.ink, spent: price, stats };
+  }
+
   // --- вороги ----------------------------------------------------------------
   function spawnEnemy(row: number | null = null, typeId = 'earling', hpMul = 1): LaneEnemy {
     const r = row ?? Math.floor(Math.random() * band.rows);
@@ -326,7 +364,7 @@ export function createLaneGame({
 
   return {
     state, wallet, enemies, combat, band, tower, towerX, towerY,
-    spawnEnemy, damage, addPart, update, rescale,
+    spawnEnemy, damage, addPart, reinkPart, reinkCost, update, rescale,
     resize: drawLanes,
   };
 }

@@ -158,6 +158,9 @@ export interface RigPart {
   pivot?: Vec2;
   /** ім'я ручки з look.pens */
   pen?: string;
+  /** множник до розміру з parts.json; за замовчуванням 1, тому дані, які
+   *  його не задають, малюються як малювались */
+  scale?: number;
   mods?: Mod[];
 }
 

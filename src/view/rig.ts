@@ -118,7 +118,10 @@ export function buildRig(
 
     const spr = new Sprite(tex);
     spr.anchor.set(p.pivot?.[0] ?? 0.5, p.pivot?.[1] ?? 0.5);
-    spr.setSize(size[0], size[1]);
+    // scale за замовчуванням 1: rigs.json його не задає, тому вороги, база й
+    // декор мають той самий розмір, що й раніше.
+    const ps = p.scale ?? 1;
+    spr.setSize(size[0] * ps, size[1] * ps);
     spr.tint = (p.pen && look.pens[p.pen]) ?? look.pens.blue;
     joint.addChild(spr);
 

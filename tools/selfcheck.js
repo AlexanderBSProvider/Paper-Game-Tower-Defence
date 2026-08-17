@@ -17,7 +17,7 @@ import { createGrid, lineCells, WALL, BASE } from '../dist/model/grid.js';
 import { computeFlow, reaches, stepFrom, routeFrom, simplify, wouldSeal } from '../dist/model/flow.js';
 import { createWallet } from '../dist/model/economy.js';
 import { makeTemplate, scoreTrace, magnetize, resample, nearestOn } from '../dist/model/trace.js';
-import { createBuild, qualityMul, gunOf } from '../dist/model/build.js';
+import { createBuild, qualityMul, gunOf, inkMul, canReink, MAX_INK } from '../dist/model/build.js';
 import { chainTargets, oppositeTarget } from '../dist/model/aim.js';
 import { rowY, rowOf, rowHeight } from '../dist/model/lane.js';
 import { createSquad } from '../dist/model/squad.js';
@@ -774,6 +774,73 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
     assert.ok(r.gun.damage > 0 && r.gun.range > 0);
     assert.equal(m.gun, undefined, 'мілі не має бути гармати');
   }
+}
+
+// --- переобведення деталі ---------------------------------------------------
+// Друга вісь росту вежі. Найтихіший спосіб зламати: зробити так, щоб рівень 0
+// давав не рівно 1.0 — тоді мовчки поїде баланс лабіринту, який переобведення
+// не використовує взагалі.
+{
+  assert.equal(inkMul(0), 1, 'рівень 0 мусить давати рівно 1.0, інакше поїде лабіринт');
+  assert.ok(inkMul(1) > inkMul(0), 'переобведення має підсилювати');
+  assert.equal(inkMul(MAX_INK), inkMul(MAX_INK + 99), 'вище стелі не росте');
+
+  const TP = JSON.parse(readFileSync(
+    fileURLToPath(new URL('../data/towerparts.json', import.meta.url)), 'utf8'));
+
+  const b = createBuild(TP.parts, TP);
+  b.add('stump', null, 1);
+  const spikes = b.add('spikes', { node: b.nodes[0].id, name: 'left' }, 1);
+  assert.ok(spikes.ok);
+
+  const dmg0 = b.stats().damage;
+  assert.equal(b.nodes.find((n) => n.id === spikes.id).ink, 0, 'нова деталь має ink 0');
+
+  const r = b.reink(spikes.id, 1);
+  assert.ok(r.ok && r.ink === 1, 'переобведення не підняло рівень');
+  assert.ok(b.stats().damage > dmg0, 'переобведення не додало шкоди');
+
+  // Стеля тримається, і зайвий раз чорнило не бере.
+  for (let i = 1; i < MAX_INK; i++) assert.ok(b.reink(spikes.id, 1).ok, `рівень ${i + 1} не став`);
+  const capped = b.reink(spikes.id, 1);
+  assert.ok(!capped.ok, 'переобведення пробило стелю');
+  assert.equal(b.nodes.find((n) => n.id === spikes.id).ink, MAX_INK);
+
+  assert.ok(!b.reink(999, 1).ok, 'переобвели неіснуючу деталь');
+
+  // Деталь БЕЗ статів переобводити не можна, і це не дрібниця: заміряно, що
+  // inkScale дає тумбі +0.008 радіуса за рівень при ціні 12 чорнила. Мовчки
+  // продавати таке — гірше, ніж чесно відмовити.
+  {
+    const c = createBuild(TP.parts, TP);
+    c.add('stump', null, 1);
+    assert.equal(TP.parts.stump.stats, undefined, 'тест утратив сенс: у тумби зʼявились стати');
+    const base = c.nodes[0];
+    assert.equal(canReink(base), false, 'заготовку не мало б бути дозволено переобводити');
+    const r = c.reink(base.id, 1);
+    assert.ok(!r.ok, 'заготовку переобвели, хоч підсилювати в ній нема чого');
+    assert.equal(base.ink, 0, 'відмовлене переобведення все одно підняло рівень');
+
+    // А зброю — можна, і вона від цього росте.
+    const w = c.add('spikes', { node: base.id, name: 'left' }, 1);
+    const node = c.nodes.find((n) => n.id === w.id);
+    assert.equal(canReink(node), true, 'зброю мало б бути дозволено переобводити');
+    const dmg0 = c.stats().damage;
+    assert.ok(c.reink(w.id, 1).ok);
+    assert.ok(c.stats().damage > dmg0, 'переобведення зброї не дало шкоди');
+
+    // canReink закривається на стелі — UI питає саме його, тому воно мусить
+    // враховувати не лише стати.
+    while (c.reink(w.id, 1).ok) { /* до стелі */ }
+    assert.equal(canReink(node), false, 'canReink не бачить стелі');
+  }
+
+  // Опис рига несе рівень назовні — інакше гравець не побачив би різниці.
+  const def = b.rigDef();
+  const grown = def.parts.find((p) => p.part === 'spikes');
+  assert.ok(grown.scale > 1, 'переобведена деталь не підросла у rigDef');
+  const base = def.parts.find((p) => p.part === 'stump');
+  assert.equal(base.scale, 1, 'необведена деталь мусить лишитись розміру 1');
 }
 
 // --- lane mode: дані рівня й союзників --------------------------------------
