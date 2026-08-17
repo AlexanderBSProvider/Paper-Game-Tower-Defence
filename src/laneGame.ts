@@ -19,7 +19,7 @@ import { createCombat } from './combat.js';
 import { createBuild, gunOf } from './model/build.js';
 import { rowY, rowHeight } from './model/lane.js';
 import type { Band, LaneLevel } from './model/lane.js';
-import type { Build } from './model/build.js';
+import type { Build, Stats } from './model/build.js';
 import type { Combat } from './combat.js';
 import type { Wallet } from './model/economy.js';
 import type {
@@ -61,18 +61,28 @@ export interface LaneGameOpts {
   partTex: Map<string, Texture>;
 }
 
+export type AddPartResult =
+  | { ok: true; id: number; spent: number; stats: Stats }
+  | { ok: false; reason: string };
+
 export interface LaneGame {
   state: LaneState;
   wallet: Wallet;
   enemies: LaneEnemy[];
   combat: Combat;
   band: Band;
-  /** склад єдиної вежі — те, що доростатиме панеллю апгрейду */
+  /** склад єдиної вежі — те, що доростає панеллю апгрейду */
   tower: Build;
   towerX: number;
   towerY: number;
   spawnEnemy(row?: number | null, typeId?: string, hpMul?: number): LaneEnemy;
   damage(e: Enemy, amount: number): boolean;
+  /** Домалювати деталь у сокет вежі — єдиний спосіб зробити її сильнішою. */
+  addPart(
+    partId: string,
+    at: { node: number; name: string } | null,
+    quality?: number,
+  ): AddPartResult;
   update(dtMs: number): void;
   rescale(s: number): void;
   resize(): void;
@@ -196,6 +206,37 @@ export function createLaneGame({
   let towerRig = placeBuild(tower, towerX, towerY);
   combat.add(TOWER_ID, gunOf(tower.stats(), balance.projectiles), towerRig, towerX, towerY);
 
+  /**
+   * Домалювати деталь до вежі — це і є апгрейд.
+   *
+   * Риг перезбирається цілком: склад міняє не картинку, а дерево частин, тож
+   * латати наявний вийшло б дорожче й крихкіше. Відкат стрільби при цьому не
+   * скидається (див. combat.retune) — інакше апгрейд посеред хвилі дарував би
+   * позачерговий постріл.
+   */
+  function addPart(
+    partId: string,
+    at: { node: number; name: string } | null,
+    quality = 1,
+  ): AddPartResult {
+    const res = tower.add(partId, at, quality);
+    if (!res.ok) return res;
+
+    // Платимо після того, як склад прийняв деталь: інакше відмова «зайнято»
+    // з'їдала б чорнило. Не вистачило — знімаємо назад, слідів не лишається.
+    const price = towerParts.parts[partId]?.cost ?? 0;
+    if (!wallet.pay(price)) {
+      tower.remove(res.id);
+      return { ok: false, reason: 'мало чорнила' };
+    }
+
+    unplace(towerRig);
+    towerRig = placeBuild(tower, towerX, towerY);
+    const stats = tower.stats();
+    combat.retune(TOWER_ID, gunOf(stats, balance.projectiles), towerRig);
+    return { ok: true, id: res.id, spent: price, stats };
+  }
+
   // --- вороги ----------------------------------------------------------------
   function spawnEnemy(row: number | null = null, typeId = 'earling', hpMul = 1): LaneEnemy {
     const r = row ?? Math.floor(Math.random() * band.rows);
@@ -285,7 +326,7 @@ export function createLaneGame({
 
   return {
     state, wallet, enemies, combat, band, tower, towerX, towerY,
-    spawnEnemy, damage, update, rescale,
+    spawnEnemy, damage, addPart, update, rescale,
     resize: drawLanes,
   };
 }

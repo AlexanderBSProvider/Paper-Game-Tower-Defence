@@ -20,6 +20,7 @@ import { createSdk } from './sdk.js';
 import { createTracePad } from './controller/tracepad.js';
 import { createWorkshop } from './controller/workshop.js';
 import { createLaneGame } from './laneGame.js';
+import { createTowerPanel } from './controller/towerPanel.js';
 import type { LaneLevel } from './model/lane.js';
 import type {
   Balance, Layout, Level, Look, Parts, RigDefs, TowerParts,
@@ -113,13 +114,19 @@ if (lane) {
     world, look, level: laneLevel!, balance, rigDefs, parts, textures, layout,
     towerParts, partTex,
   });
+  const towerPanel = createTowerPanel({
+    canvas: app.canvas, app, hudLayer: hud, worldLayer: world,
+    look, layout, game: laneGame, towerParts, tracePad,
+  });
   systems.push((dt) => laneGame.update(dt));
+  systems.push((dt) => towerPanel.update(dt / 1000));
   resizers.push((L) => { laneGame.rescale(L.spriteScale); laneGame.resize(); });
+  resizers.push(() => towerPanel.resize());
   phaseOf = () => laneGame.state.phase;
 
   window.__td = {
-    app, look, layout, world, hud, paper, state: null, systems,
-    laneGame, sdk, textures, partTex, tracePad, laneLevel,
+    app, look, layout, world, hud, paper, state, systems,
+    laneGame, towerPanel, sdk, textures, partTex, tracePad, laneLevel,
   };
 } else {
   const game = createGame({
