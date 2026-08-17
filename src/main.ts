@@ -21,7 +21,7 @@ import { createTracePad } from './controller/tracepad.js';
 import { createWorkshop } from './controller/workshop.js';
 import { createLaneGame } from './laneGame.js';
 import { createTowerPanel } from './controller/towerPanel.js';
-import type { LaneLevel } from './model/lane.js';
+import type { Allies, LaneLevel } from './model/lane.js';
 import type {
   Balance, Layout, Level, Look, Parts, RigDefs, TowerParts,
 } from './types.js';
@@ -45,9 +45,12 @@ const [look, parts, rigDefs, level, balance, towerParts] = await Promise.all([
 
 // Дані режиму тягнемо лише коли він увімкнений: лабіринту вони не потрібні,
 // і платити за них двома зайвими запитами він не мусить.
-const laneLevel = lane
-  ? await fetch('./data/laneLevel.json').then((r) => r.json()) as LaneLevel
-  : null;
+const [laneLevel, laneAllies] = lane
+  ? await Promise.all([
+      fetch('./data/laneLevel.json').then((r) => r.json()),
+      fetch('./data/allies.json').then((r) => r.json()),
+    ]) as [LaneLevel, Allies]
+  : [null, null];
 
 const sdk = createSdk();
 await sdk.init();
@@ -111,7 +114,7 @@ resizers.push((L) => tracePad.resize(L));
 
 if (lane) {
   const laneGame = createLaneGame({
-    world, look, level: laneLevel!, balance, rigDefs, parts, textures, layout,
+    world, look, level: laneLevel!, allies: laneAllies!, balance, rigDefs, parts, textures, layout,
     towerParts, partTex,
   });
   const towerPanel = createTowerPanel({

@@ -18,7 +18,9 @@ import { createWallet } from './model/economy.js';
 import { createCombat } from './combat.js';
 import { createBuild, gunOf } from './model/build.js';
 import { rowY, rowHeight } from './model/lane.js';
-import type { Band, LaneLevel } from './model/lane.js';
+import { createSquad } from './model/squad.js';
+import type { Allies, Band, LaneLevel } from './model/lane.js';
+import type { Ally, AllyKind, Squad } from './model/squad.js';
 import type { Build, Stats } from './model/build.js';
 import type { Combat } from './combat.js';
 import type { Wallet } from './model/economy.js';
@@ -52,6 +54,7 @@ export interface LaneGameOpts {
   world: Container;
   look: Look;
   level: LaneLevel;
+  allies: Allies;
   balance: Balance;
   rigDefs: RigDefs;
   parts: Parts;
@@ -60,6 +63,10 @@ export interface LaneGameOpts {
   towerParts: TowerParts;
   partTex: Map<string, Texture>;
 }
+
+export type AddAllyOutcome =
+  | { ok: true; ally: Ally; spent: number }
+  | { ok: false; reason: string };
 
 export type AddPartResult =
   | { ok: true; id: number; spent: number; stats: Stats }
@@ -92,6 +99,10 @@ export interface LaneGame {
   reinkPart(nodeId: number, quality?: number): ReinkPartResult;
   /** Скільки коштує наступне переобведення цієї деталі. */
   reinkCost(nodeId: number): number;
+  /** Загін перед вежею: мілі тримають рух, ренжові стріляють через combat. */
+  squad: Squad;
+  /** Намалювати союзника в ряд. Повний ряд виштовхує найслабшого. */
+  addAlly(kind: AllyKind, row: number, quality?: number): AddAllyOutcome;
   update(dtMs: number): void;
   rescale(s: number): void;
   resize(): void;
@@ -105,7 +116,7 @@ const TOWER_ID = 0;
 const TEMPLATE = 'magic_tower';
 
 export function createLaneGame({
-  world, look, level, balance, rigDefs, parts, textures, layout, towerParts, partTex,
+  world, look, level, allies, balance, rigDefs, parts, textures, layout, towerParts, partTex,
 }: LaneGameOpts): LaneGame {
   const band: Band = { y0: level.band.y0, y1: level.band.y1, rows: level.rows };
   const towerX = level.towerX;
@@ -275,6 +286,52 @@ export function createLaneGame({
     return { ok: true, id: nodeId, ink: res.ink, spent: price, stats };
   }
 
+  // --- загін -----------------------------------------------------------------
+  const squad = createSquad({
+    rows: level.rows, cols: level.squad.cols,
+    xLeft: level.squad.xLeft, xRight: level.squad.xRight,
+    melee: allies.melee.stats, ranged: allies.ranged.stats,
+  });
+
+  /** Риги союзників за id: у combat вони заводяться під тим самим id, тому
+   *  зняти союзника — це зняти риг і виписати його з бою одним ключем. */
+  const allyRigs = new Map<number, Rig>();
+
+  /** Союзники беруть id від 1: нуль назавжди за вежею. */
+  const allyCombatId = (a: Ally) => a.id;
+
+  function dropAlly(a: Ally) {
+    const rig = allyRigs.get(a.id);
+    if (rig) { unplace(rig); allyRigs.delete(a.id); }
+    combat.remove(allyCombatId(a));
+  }
+
+  /**
+   * Намалювати союзника в ряд.
+   *
+   * Ренжовий одразу заводиться в combat тим самим викликом, що й вежа — через
+   * це рикошет, сплеш і комбо працюють для нього безплатно. Мілі в combat не
+   * потрапляє: він б'є впритул, і його цикл нижче, в update().
+   */
+  function addAlly(kind: AllyKind, row: number, quality = 1): AddAllyOutcome {
+    const price = allies[kind].cost;
+    if (wallet.ink < price) return { ok: false, reason: 'мало чорнила' };
+
+    const res = squad.add(kind, row, quality);
+    if (!res.ok) return res;
+    wallet.pay(price);
+
+    // Виштовхнутий звільняє і риг, і місце в бою — інакше він стріляв би
+    // привидом із чужого місця.
+    if (res.replaced) dropAlly(res.replaced);
+
+    const a = res.ally;
+    const rig = place(allies[kind].rig ?? 'earling', a.x, rowY(band, a.row));
+    allyRigs.set(a.id, rig);
+    if (a.gun) combat.add(allyCombatId(a), a.gun, rig, a.x, rowY(band, a.row));
+    return { ok: true, ally: a, spent: price };
+  }
+
   // --- вороги ----------------------------------------------------------------
   function spawnEnemy(row: number | null = null, typeId = 'earling', hpMul = 1): LaneEnemy {
     const r = row ?? Math.floor(Math.random() * band.rows);
@@ -292,6 +349,33 @@ export function createLaneGame({
     enemies.push(e);
     state.spawned++;
     return e;
+  }
+
+  /**
+   * Рукопашна: мілі тримає ворога свого ряду й розмінюється з ним ударами.
+   *
+   * Це єдине, що не можна віддати combat.ts: він знає лише «стріляти по цілі
+   * в радіусі» і нічого не знає про те, що хтось перекриває дорогу. Тому цикл
+   * тут, а combat лишається недоторканим.
+   *
+   * @returns true, якщо ворога тримають — тоді він цього кадру не йде.
+   */
+  function meleeHold(e: LaneEnemy, dt: number): boolean {
+    const blocker = squad.blockerAt(e.row, e.x);
+    if (!blocker || e.x - blocker.x > blocker.reach) return false;
+
+    blocker.cd -= dt;
+    if (blocker.cd <= 0) {
+      blocker.cd = 1 / blocker.rate;
+      const rig = allyRigs.get(blocker.id);
+      rig?.fire('attack');
+      damage(e, blocker.damage);
+    }
+
+    // Ворог б'є у відповідь: інакше мілі тримав би лінію вічно й безкарно.
+    e.rig.fire('attack');
+    if (squad.damage(blocker, e.def.speed * dt * 6)) dropAlly(blocker);
+    return true;
   }
 
   function advance(e: LaneEnemy, step: number) {
@@ -342,11 +426,22 @@ export function createLaneGame({
 
     if (!over) {
       updateWaves(dt);
+      // Згаслі союзники зникають самі: недбало намальований в'яне швидше, і
+      // це та ціна поспіху, на якій тримається бій.
+      for (const gone of squad.tick(dt)) dropAlly(gone);
+
       for (const e of [...enemies]) {
-        advance(e, e.def.speed * (1 - (e.slow ?? 0)) * dt);
-        if (!enemies.includes(e)) continue;
+        // Спершу питаємо, чи його тримають: якщо так — крок цього кадру
+        // не робиться взагалі, а не робиться й скасовується.
+        if (meleeHold(e, dt)) {
+          if (!enemies.includes(e)) continue;
+          e.rig.moving = false;
+        } else {
+          advance(e, e.def.speed * (1 - (e.slow ?? 0)) * dt);
+          if (!enemies.includes(e)) continue;
+          e.rig.moving = true;
+        }
         e.rig.view.position.set(e.x, e.y);
-        e.rig.moving = true;
       }
     }
     combat.update(dt, !over);
@@ -364,7 +459,7 @@ export function createLaneGame({
 
   return {
     state, wallet, enemies, combat, band, tower, towerX, towerY,
-    spawnEnemy, damage, addPart, reinkPart, reinkCost, update, rescale,
+    spawnEnemy, damage, addPart, reinkPart, reinkCost, squad, addAlly, update, rescale,
     resize: drawLanes,
   };
 }
