@@ -57,6 +57,8 @@ export interface LaneLevel {
   rows: number;
   /** вежа стоїть на всіх рядах одразу, тому в неї лише x */
   towerX: number;
+  /** своя база вежі: towerparts.base задана під лабіринт і тут не діставала */
+  towerBase?: { rate?: number; range?: number };
   spawnX: number;
   squad: { cols: number; xLeft: number; xRight: number };
   waveBreak?: number;

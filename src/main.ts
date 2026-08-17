@@ -19,9 +19,17 @@ import { createHud } from './controller/hud.js';
 import { createSdk } from './sdk.js';
 import { createTracePad } from './controller/tracepad.js';
 import { createWorkshop } from './controller/workshop.js';
+import { createLaneGame } from './laneGame.js';
+import type { LaneLevel } from './model/lane.js';
 import type {
   Balance, Layout, Level, Look, Parts, RigDefs, TowerParts,
 } from './types.js';
+
+// Два режими в одній збірці. `?mode=lane` — коридор з однією вежею, усе інше —
+// звичайний лабіринт. Гілки не перетинаються: жоден файл лабіринту про режим
+// не знає, і навпаки.
+const mode = new URLSearchParams(location.search).get('mode');
+const lane = mode === 'lane';
 
 // Каст — єдине місце, де дані входять у програму. Без нього Promise.all віддає
 // any[], і всі шість наборів розтікаються нетипізованими по всіх модулях.
@@ -33,6 +41,12 @@ const [look, parts, rigDefs, level, balance, towerParts] = await Promise.all([
   fetch('./data/balance.json').then((r) => r.json()),
   fetch('./data/towerparts.json').then((r) => r.json()),
 ]) as [Look, Parts, RigDefs, Level, Balance, TowerParts];
+
+// Дані режиму тягнемо лише коли він увімкнений: лабіринту вони не потрібні,
+// і платити за них двома зайвими запитами він не мусить.
+const laneLevel = lane
+  ? await fetch('./data/laneLevel.json').then((r) => r.json()) as LaneLevel
+  : null;
 
 const sdk = createSdk();
 await sdk.init();
@@ -69,40 +83,87 @@ app.stage.addChild(paper.base, world, paper.overlay, hud, padSheet, pad, boil.sp
 
 const textures = bakeParts(app.renderer, parts, look);
 const partTex = bakeCatalogue(app.renderer, towerParts.parts, look);
-const game = createGame({
-  world, hud, look, level, balance, rigDefs, parts, textures, layout,
-  towerParts, partTex,
-});
-// ponytail: рестарт через перезавантаження — стан гри ніде не лишається, а
-// збірка вся локальна (~200 мс). Якщо платформа схоче крутити рекламу між
-// партіями, тут знадобиться скидання на місці, без втрати сесії SDK.
-const hudUi = createHud({ hud, look, balance, game, onRestart: () => location.reload() });
+
 const debug = new URLSearchParams(location.search).has('debug');
+
+// Скільки клітинок видно завжди. У режимі коридору світ лежить навпаки до
+// портретного лабіринту, тому ядро своє.
+const core = lane ? laneLevel!.core : look.core;
+
+// Що переставити при ресайзі. Режим наповнює цей список сам, і relayout()
+// не мусить знати, який із них зараз працює.
+const resizers: ((L: Layout) => void)[] = [];
+const systems: ((dtMs: number) => void)[] = []; // отримують 0 на паузі
+/** Фаза для SDK: 'wave' означає, що гравець реально в бою. */
+let phaseOf: () => string;
+
+// Пауза, коли вкладку сховали (вимога Poki та CrazyGames), зупиняє ЛОГІКУ, а не
+// рендер: якщо гасити тікер, у канвасі лишається мертвий кадр.
+const state = { paused: false };
+
 const tracePad = createTracePad({
   canvas: app.canvas, layer: pad, sheetLayer: padSheet, look,
   // З ?debug рамка тримає результат довго — інакше його не встигнути роздивитись.
   cfg: debug ? { holdMs: 8000 } : {},
 });
-const workshop = createWorkshop({
-  canvas: app.canvas, app, hudLayer: hud, worldLayer: world,
-  look, layout, game, towerParts, tracePad,
-});
+resizers.push((L) => tracePad.resize(L));
 
-const tools = createTools({
-  app, canvas: app.canvas, world, layout, game, look,
-  hud: hudUi,
-  // Поки відкрита рамка обведення або майстерня, поле не приймає ввід:
-  // інакше тап повз панель домальовував би стіну під нею.
-  blocked: () => tracePad.open || workshop.open || workshop.busyPointer,
-  onTower: (cx, cy) => workshop.openAt(cx, cy),
-});
+if (lane) {
+  const laneGame = createLaneGame({
+    world, look, level: laneLevel!, balance, rigDefs, parts, textures, layout,
+    towerParts, partTex,
+  });
+  systems.push((dt) => laneGame.update(dt));
+  resizers.push((L) => { laneGame.rescale(L.spriteScale); laneGame.resize(); });
+  phaseOf = () => laneGame.state.phase;
+
+  window.__td = {
+    app, look, layout, world, hud, paper, state: null, systems,
+    laneGame, sdk, textures, partTex, tracePad, laneLevel,
+  };
+} else {
+  const game = createGame({
+    world, hud, look, level, balance, rigDefs, parts, textures, layout,
+    towerParts, partTex,
+  });
+  // ponytail: рестарт через перезавантаження — стан гри ніде не лишається, а
+  // збірка вся локальна (~200 мс). Якщо платформа схоче крутити рекламу між
+  // партіями, тут знадобиться скидання на місці, без втрати сесії SDK.
+  const hudUi = createHud({ hud, look, balance, game, onRestart: () => location.reload() });
+  const workshop = createWorkshop({
+    canvas: app.canvas, app, hudLayer: hud, worldLayer: world,
+    look, layout, game, towerParts, tracePad,
+  });
+
+  const tools = createTools({
+    app, canvas: app.canvas, world, layout, game, look,
+    hud: hudUi,
+    // Поки відкрита рамка обведення або майстерня, поле не приймає ввід:
+    // інакше тап повз панель домальовував би стіну під нею.
+    blocked: () => tracePad.open || workshop.open || workshop.busyPointer,
+    onTower: (cx, cy) => workshop.openAt(cx, cy),
+  });
+
+  systems.push((dt) => game.update(dt));
+  systems.push((dt) => workshop.update(dt / 1000));
+  systems.push(() => hudUi.tick());
+  resizers.push((L) => game.rescale(L.spriteScale));
+  resizers.push((L) => hudUi.resize(L));
+  resizers.push(() => workshop.resize());
+  phaseOf = () => game.state.phase;
+
+  window.__td = {
+    app, look, layout, world, hud, hudUi, paper, state, systems, game, tools,
+    textures, sdk, tracePad, workshop, towerParts, partTex,
+  };
+}
 
 const debugRect = new Graphics();
 if (debug) world.addChild(debugRect);
 
 function relayout() {
   const w = app.screen.width, h = app.screen.height;
-  const { cols, rows } = look.core;
+  const { cols, rows } = core;
 
   const cell = Math.min(w / cols, h / rows);
   const ox = Math.round((w - cols * cell) / 2);
@@ -121,10 +182,7 @@ function relayout() {
   world.position.set(ox, oy);
   paper.resize(layout);
   boil.resize(w, h);
-  game.rescale(layout.spriteScale);
-  hudUi.resize(layout);
-  tracePad.resize(layout);
-  workshop.resize();
+  for (const r of resizers) r(layout);
 
   if (debug) {
     debugRect.clear()
@@ -133,16 +191,11 @@ function relayout() {
   }
 }
 
-// Пауза, коли вкладку сховали (вимога Poki та CrazyGames), зупиняє ЛОГІКУ, а не
-// рендер: якщо гасити тікер, у канвасі лишається мертвий кадр.
-const state = { paused: false };
 document.addEventListener('visibilitychange', () => {
   state.paused = document.hidden;
   if (document.hidden) sdk.gameplayStop();
-  else if (game.state.phase === 'wave') sdk.gameplayStart();
+  else if (phaseOf() === 'wave') sdk.gameplayStart();
 });
-
-const systems: ((dtMs: number) => void)[] = []; // отримують 0 на паузі
 
 app.ticker.add(({ deltaMS }) => {
   const dt = state.paused ? 0 : deltaMS;
@@ -151,15 +204,11 @@ app.ticker.add(({ deltaMS }) => {
   for (const s of systems) s(dt);
 });
 
-systems.push((dt) => game.update(dt));
-systems.push((dt) => workshop.update(dt / 1000));
-systems.push(() => hudUi.tick());
-
 // Платформам треба знати, коли гравець реально в бою: по цьому вони вирішують,
 // коли можна показати рекламу. Стежимо за фазою, окремих викликів не розсипаємо.
 let lastPhase = '';
 systems.push(() => {
-  const p = game.state.phase;
+  const p = phaseOf();
   if (p === lastPhase) return;
   lastPhase = p;
   if (p === 'wave') sdk.gameplayStart();
@@ -170,8 +219,3 @@ sdk.loadingFinished();
 
 relayout();
 app.renderer.on('resize', relayout);
-
-window.__td = {
-  app, look, layout, world, hud, hudUi, paper, state, systems, game, tools, textures, sdk,
-  tracePad, workshop, towerParts, partTex,
-};
