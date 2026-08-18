@@ -100,7 +100,9 @@ export function createLaneHud({ hud, look, balance, allies, game, onRestart }: L
   let u = 24;
   let tool: AllyKind = 'melee';
   /** останнє намальоване — щоб не перемальовувати щокадру */
-  let shown: { ink: number; lives: number; tool: string; phase: Phase; wave: number } | null = null;
+  let shown: {
+    ink: number; lives: number; tool: string; phase: Phase; wave: number; shield: number;
+  } | null = null;
   let waveAt: { x: number; y: number } | null = null;
   // `!` — інваріант: place() ставить L0 і його кличе resize(), яку main кличе
   // на старті. Усе, що читає L0, працює лише після цього.
@@ -185,7 +187,18 @@ export function createLaneHud({ hud, look, balance, allies, game, onRestart }: L
     }
 
     const ls = slots.get('lives');
-    if (ls) tally(live, ls.x + ls.w * 0.14, ls.y, u, game.state.maxLives, game.state.lives, look);
+    if (ls) {
+      tally(live, ls.x + ls.w * 0.14, ls.y, u, game.state.maxLives, game.state.lives, look);
+      // Щит гілки Форту — дужки перед рисочками життів. Без цього перк невидимий:
+      // гравець платить за рівень і не бачить, за що саме.
+      for (let i = 0; i < game.shield; i++) {
+        const sx = ls.x + ls.w * 0.14 + u * (0.72 + i * 0.16);
+        penStroke(live, [[sx, ls.y + u * 0.22], [sx + u * 0.1, ls.y + u * 0.5], [sx, ls.y + u * 0.78]], {
+          color: look.pens.blue, width: u * 0.05, alpha: 0.8,
+          jitter: u * 0.015, step: u * 0.14, overshoot: u * 0.02, halo: 0.1,
+        });
+      }
+    }
 
     // Не по кишені — ціна закреслюється: тап по такому силуету нічого не дасть,
     // і краще це видно до тапу, ніж після мовчазної відмови.
@@ -210,7 +223,10 @@ export function createLaneHud({ hud, look, balance, allies, game, onRestart }: L
         { color: look.pens.pencil, alpha: 0.7 });
     }
 
-    shown = { ink, lives: game.state.lives, tool, phase: game.state.phase, wave: game.state.wave };
+    shown = {
+      ink, lives: game.state.lives, tool,
+      phase: game.state.phase, wave: game.state.wave, shield: game.shield,
+    };
   }
 
   /** Кінець партії: записка поверх аркуша. Виграв — велика галочка, програв —
@@ -275,7 +291,8 @@ export function createLaneHud({ hud, look, balance, allies, game, onRestart }: L
       if (!shown) return;
       const st = game.state;
       if (shown.ink === game.wallet.ink && shown.lives === st.lives && shown.tool === tool
-        && shown.phase === st.phase && shown.wave === st.wave) return;
+        && shown.phase === st.phase && shown.wave === st.wave
+        && shown.shield === game.shield) return;
       const phaseChanged = shown.phase !== st.phase;
       drawLive();
       if (phaseChanged) drawEnd();

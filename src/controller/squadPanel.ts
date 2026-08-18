@@ -62,7 +62,8 @@ export function createSquadPanel({
     const cy = (py - layout.oy) / layout.cell;
     const { band } = game;
     if (cy < band.y0 || cy > band.y1) return null;
-    if (cx < game.towerX + 1.5) return null;
+    // Зона вежі росте разом із її рівнем — тому число тут не своє, а її.
+    if (cx < game.towerX + game.towerReach) return null;
     return rowOf(band, cy);
   }
 

@@ -75,8 +75,8 @@ export type AddPartResult =
   | { ok: true; id: number; spent: number; stats: Stats }
   | { ok: false; reason: string };
 
-export type ReinkPartResult =
-  | { ok: true; id: number; ink: number; spent: number; stats: Stats }
+export type LevelUpResult =
+  | { ok: true; partId: string; spent: number; refunded: number; stats: Stats }
   | { ok: false; reason: string };
 
 export interface LaneGame {
@@ -97,11 +97,22 @@ export interface LaneGame {
     at: { node: number; name: string } | null,
     quality?: number,
   ): AddPartResult;
-  /** Обвести вже поставлену деталь ще раз. Друга вісь: вглибину. Працює й
-   *  тоді, коли всі сокети зайняті, — саме цим вежа не впирається в стелю. */
-  reinkPart(nodeId: number, quality?: number): ReinkPartResult;
-  /** Скільки коштує наступне переобведення цієї деталі. */
-  reinkCost(nodeId: number): number;
+  /**
+   * Дорости рівень вежі. Друга вісь: вглибину. Працює й тоді, коли всі сокети
+   * зайняті, — саме цим вежа не впирається в стелю.
+   * @param partId деталь-основа з `next` поточного рівня
+   */
+  levelUp(partId: string, quality?: number): LevelUpResult;
+  /** Скільки лишилось зарядів щита (перк гілки Форту); 0, якщо перка немає. */
+  readonly shield: number;
+  /**
+   * Півширина вежі в клітинках світу: зона, що належить вежі, а не полю.
+   *
+   * Одне джерело для панелі апгрейду й для загону. Раніше в обох стояло по
+   * «1.5», і Цитадель шириною три клітинки з такої зони вилазила: тап по її
+   * краю ставив би союзника замість того, щоб відкрити панель.
+   */
+  readonly towerReach: number;
   /** Загін перед вежею: мілі тримають рух, ренжові стріляють через combat. */
   squad: Squad;
   /**
@@ -116,12 +127,33 @@ export interface LaneGame {
   resize(): void;
 }
 
+/**
+ * Іконки комбо — те, чим вони перестають бути невидимими.
+ *
+ * Комбо були написані в даних і працювали, але на екрані від них не було ні
+ * знака: гравець складав пружину зі стволом і не дізнавався, що ввімкнув
+ * рикошет. Літер перо не вміє, тому підпис — маленький малюнок, як усе інше
+ * на полях. Штрихи в 0..1 коробки.
+ */
+const COMBO_ICONS: Record<string, Vec2[][]> = {
+  // рикошет — відскок від стінки
+  ricochet: [[[0.02, 0.2], [0.6, 0.5], [0.02, 0.8]], [[0.75, 0.05], [0.75, 0.95]]],
+  // страх — тремтяча лінія
+  fear: [[[0.05, 0.7], [0.2, 0.3], [0.35, 0.75], [0.5, 0.28], [0.65, 0.72], [0.8, 0.32], [0.95, 0.68]]],
+  // двобічний ствол — у два боки
+  twoWay: [[[0.05, 0.5], [0.95, 0.5]], [[0.28, 0.25], [0.03, 0.5], [0.28, 0.75]], [[0.72, 0.25], [0.97, 0.5], [0.72, 0.75]]],
+};
+
 /** Вежа в combat під фіксованим id: вона тут одна й назавжди. Союзники
  *  пізніше візьмуть id від 1, тому нуль лишається за нею. */
 const TOWER_ID = 0;
 
+/** Другий ствол гілки Арсеналу — окремий запис у combat. Id від'ємний: нуль
+ *  за вежею, додатні за союзниками, тому вниз від нуля ніхто не претендує. */
+const TOWER_ID2 = -1;
+
 /** Із чого починається вежа. Далі гравець дороблює її сам. */
-const TEMPLATE = 'magic_tower';
+const TEMPLATE = 'lane';
 
 export function createLaneGame({
   world, renderer, look, level, allies, balance, rigDefs, parts, textures, layout,
@@ -233,7 +265,104 @@ export function createLaneGame({
     tower.add(partId, host == null ? null : { node: tower.nodes[host].id, name: socket! }, 1);
   }
   let towerRig = placeBuild(tower, towerX, towerY);
-  combat.add(TOWER_ID, gunOf(tower.stats(), balance.projectiles), towerRig, towerX, towerY);
+
+  /** Перк гілки живе в деталі-основі: рівень вежі — це вона й є. */
+  const perk = () => tower.nodes[0]?.part.perk ?? {};
+
+  /** Які комбо вже показані — щоб не блимати тим самим на кожній зміні складу. */
+  const shownCombos = new Set<string>();
+
+  /**
+   * Спалах над вежею: увімкнулось комбо.
+   *
+   * Маркером, бо це єдиний дозволений у стилі залив, і він тут значить рівно
+   * те саме, що в зошиті — «оце важливо».
+   */
+  function flashCombo(id: string) {
+    const icon = COMBO_ICONS[id];
+    if (!icon) return;
+    const g = new Graphics();
+    const u = 1.1;
+    const x = towerX - u / 2, y = towerY - (band.y1 - band.y0) / 2 - u;
+    for (const s of icon) {
+      penStroke(g, s.map(([sx, sy]): Vec2 => [x + sx * u, y + sy * u]), {
+        color: look.pens.marker, width: 0.1, alpha: 0.95,
+        jitter: 0.03, step: 0.2, overshoot: 0.04, halo: 0.3,
+      });
+    }
+    fxLayer.addChild(g);
+    fx.push({
+      t: 0,
+      step(dt) {
+        this.t += dt;
+        const p = this.t / 1.6;
+        // Спершу стоїть, тане лише в останню третину: інакше не встигнути прочитати.
+        g.alpha = p < 0.66 ? 1 : Math.max(0, (1 - p) / 0.34);
+        g.position.y = -0.5 * p;
+        if (p < 1) return false;
+        g.destroy();
+        return true;
+      },
+    });
+  }
+
+  /**
+   * Нові комбо в складі — кожне блимає раз.
+   *
+   * Погасле забуваємо: рівень може збити деталь, на якій комбо трималось, і
+   * тоді зібране заново мусить блимнути знову.
+   */
+  function flashNewCombos(stats: Stats) {
+    const now = new Set(stats.combos);
+    for (const id of shownCombos) if (!now.has(id)) shownCombos.delete(id);
+    for (const id of stats.combos) {
+      if (shownCombos.has(id)) continue;
+      shownCombos.add(id);
+      flashCombo(id);
+    }
+  }
+
+  /** Заряди щита (гілка Форту). Повні на кожній перерві між хвилями. */
+  let shield = 0;
+
+  /**
+   * Один ствол у бою: завести, перенастроїти або зняти.
+   *
+   * `combat.retune` при `def === null` тихо нічого не робить — і це не дрібниця
+   * саме тут: рівень може збити деталь, на якій трималась уся зброя, і вежа
+   * стріляла б далі старою гарматою. Тому «немає гармати» тут означає знятий
+   * запис, а не проігнорований виклик.
+   *
+   * @param cdOffset частка періоду, на яку зсунути перший постріл
+   */
+  function setGun(id: number, gun: ReturnType<typeof gunOf>, cdOffset = 0) {
+    if (!gun) { combat.remove(id); return; }
+    if (combat.towers.has(id)) { combat.retune(id, gun, towerRig); return; }
+    combat.add(id, gun, towerRig, towerX, towerY);
+    const t = combat.towers.get(id);
+    if (t && cdOffset) t.cd = cdOffset / gun.rate;
+  }
+
+  /**
+   * Завести вежу в бій — при старті й після кожної зміни складу чи рівня.
+   *
+   * Гілка Арсеналу заводить ДВА записи: `combat` уже тримає скільки завгодно
+   * стрільців, тому другий ствол — це запис, а не рядок у combat.ts. Шкода
+   * кожного менша за повну, а відкат другого зсунутий на півперіод: вежа б'є
+   * частіше й дрібніше — розмін проти одного важкого пострілу.
+   */
+  function retuneTower() {
+    const stats = tower.stats();
+    const guns = perk().guns ?? 1;
+    const gun = gunOf(stats, balance.projectiles);
+    const split = gun && guns > 1 ? { ...gun, damage: gun.damage * 0.6 } : gun;
+    setGun(TOWER_ID, split);
+    setGun(TOWER_ID2, guns > 1 ? split : null, 0.5);
+    return stats;
+  }
+  // Комбо шаблону вважаємо вже показаними: спалах на буті нічого не означає, а
+  // на першій же деталі блимнув би тим, що стояло від початку.
+  for (const id of retuneTower().combos) shownCombos.add(id);
 
   /**
    * Домалювати деталь до вежі — це і є апгрейд.
@@ -261,38 +390,48 @@ export function createLaneGame({
 
     unplace(towerRig);
     towerRig = placeBuild(tower, towerX, towerY);
-    const stats = tower.stats();
-    combat.retune(TOWER_ID, gunOf(stats, balance.projectiles), towerRig);
+    const stats = retuneTower();
+    flashNewCombos(stats);
     return { ok: true, id: res.id, spent: price, stats };
   }
 
-  /** Ціна наступного переобведення: що темніша деталь, то дорожче наступний
-   *  прохід. Інакше вигідно було б качати одну й ту саму до стелі. */
-  function reinkCost(nodeId: number): number {
-    const n = tower.nodes.find((k) => k.id === nodeId);
-    if (!n) return 0;
-    return Math.round((n.part.cost ?? 10) * (0.6 + 0.4 * n.ink));
-  }
+  /**
+   * Дорости рівень вежі — це друга вісь росту, замість переобведення деталі.
+   *
+   * Ціна перевіряється НАПЕРЕД, а не як в addPart: `promote` знімає деталі,
+   * чиїх кріплень новий силует не має, і відкотити це назад уже нічим. Тому
+   * спершу гроші, потім склад.
+   */
+  function levelUp(partId: string, quality = 1): LevelUpResult {
+    const root = tower.nodes[0];
+    if (!root) return { ok: false, reason: 'вежі немає' };
+    const price = towerParts.parts[partId]?.cost ?? 0;
+    if (wallet.ink < price) return { ok: false, reason: 'мало чорнила' };
 
-  /** Обвести поставлену деталь ще раз. Друга вісь росту вежі. */
-  function reinkPart(nodeId: number, quality = 1): ReinkPartResult {
-    const price = reinkCost(nodeId);
-    const res = tower.reink(nodeId, quality);
+    const res = tower.promote(root.id, partId);
     if (!res.ok) return res;
+    wallet.pay(price);
+    // Якість обведення нового силуету стає якістю основи: гравець щойно провів
+    // її рукою, і саме вона множить stats.range рівня (див. towerTiers._stats).
+    // Без цього рядка старанно обведена вежа не відрізнялась би від недбалої.
+    root.quality = quality;
 
-    // Як і в addPart: платимо після того, як склад прийняв, інакше відмова
-    // «темніше вже нікуди» з'їдала б чорнило.
-    if (!wallet.pay(price)) {
-      const n = tower.nodes.find((k) => k.id === nodeId);
-      if (n) n.ink--; // відкат рівня; якість лишається змішаною, це не критично
-      return { ok: false, reason: 'мало чорнила' };
-    }
+    // За збите новим силуетом повертаємо чорнило: деталь зникла не з волі
+    // гравця, і брати за це гроші означало б карати за апгрейд. Половина, як у
+    // ластика — wallet.refund() тут не годиться, він ходить по таблиці цін
+    // інструментів, а ціна деталі живе в каталозі.
+    let refunded = 0;
+    for (const d of res.dropped) refunded += wallet.earn(Math.floor((d.part.cost ?? 0) * 0.5));
 
     unplace(towerRig);
     towerRig = placeBuild(tower, towerX, towerY);
-    const stats = tower.stats();
-    combat.retune(TOWER_ID, gunOf(stats, balance.projectiles), towerRig);
-    return { ok: true, id: nodeId, ink: res.ink, spent: price, stats };
+    const stats = retuneTower();
+    // Теги нового рівня можуть самі ввімкнути комбо — гілка тим і грає в білд.
+    flashNewCombos(stats);
+    // Щит наливається одразу: інакше гравець заплатив за Форт і до кінця хвилі
+    // не бачив, за що.
+    shield = perk().shield ?? 0;
+    return { ok: true, partId, spent: price, refunded, stats };
   }
 
   // --- загін -----------------------------------------------------------------
@@ -437,11 +576,18 @@ export function createLaneGame({
   function advance(e: LaneEnemy, step: number) {
     e.x -= step;
     if (e.x > towerX) return;
+    towerRig.fire('hit');
+    // Щит гілки Форту тримає удар замість життя. Заряд витрачається, ворог
+    // зникає, лічильник протікань не рухається — протікання тут не було.
+    if (shield > 0) {
+      shield--;
+      despawn(e);
+      return;
+    }
     // Дійшов до вежі: життя мінус, ворог зникає. Бази як окремого об'єкта
     // немає — вежа і є те, що захищають.
     state.lives = Math.max(0, state.lives - 1);
     state.leaked++;
-    towerRig.fire('hit');
     despawn(e);
     if (state.lives === 0) state.phase = 'lost';
   }
@@ -474,6 +620,8 @@ export function createLaneGame({
     state.wave++;
     state.phase = 'break';
     state.breakLeft = level.waveBreak ?? 5;
+    // Щит наливається між хвилями, а не в бою: інакше Форт тримав би нескінченно.
+    shield = perk().shield ?? 0;
   }
 
   function update(dtMs: number) {
@@ -515,7 +663,15 @@ export function createLaneGame({
 
   return {
     state, wallet, enemies, combat, band, tower, towerX, towerY,
-    spawnEnemy, damage, addPart, reinkPart, reinkCost, squad, addAlly, update, rescale,
+    spawnEnemy, damage, addPart, levelUp, squad, addAlly, update, rescale,
+    get shield() { return shield; },
+    // Півклітинка запасу — щоб палець не мусив влучати рівно в контур. Але не
+    // далі за передню колонку загону: у неї теж мусить бути куди тикнути, а на
+    // вузькому екрані spriteScale доходить до 1.8, і зона вежі накрила б її.
+    get towerReach() {
+      const own = Math.max(1.5, tower.metrics().width * layout.spriteScale / 2 + 0.5);
+      return Math.min(own, level.squad.xLeft - towerX - 0.3);
+    },
     resize: drawLanes,
   };
 }

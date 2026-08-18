@@ -118,10 +118,12 @@ export function buildRig(
 
     const spr = new Sprite(tex);
     spr.anchor.set(p.pivot?.[0] ?? 0.5, p.pivot?.[1] ?? 0.5);
-    // scale за замовчуванням 1: rigs.json його не задає, тому вороги, база й
-    // декор мають той самий розмір, що й раніше.
-    const ps = p.scale ?? 1;
-    spr.setSize(size[0] * ps, size[1] * ps);
+    spr.setSize(size[0], size[1]);
+    // Дзеркалення живе на СПРАЙТІ, не на суглобі: update() щокадру скидає
+    // суглобу масштаб у 1,1 (через squash), тому там воно б не втрималось.
+    // Заразом діти чіпляються до суглоба й не перевертаються за батьком.
+    // rigs.json flip не задає, тому вороги, база й декор незмінні.
+    if (p.flip) spr.scale.x *= -1;
     spr.tint = (p.pen && look.pens[p.pen]) ?? look.pens.blue;
     joint.addChild(spr);
 

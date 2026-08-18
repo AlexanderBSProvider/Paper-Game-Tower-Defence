@@ -158,9 +158,9 @@ export interface RigPart {
   pivot?: Vec2;
   /** ім'я ручки з look.pens */
   pen?: string;
-  /** множник до розміру з parts.json; за замовчуванням 1, тому дані, які
-   *  його не задають, малюються як малювались */
-  scale?: number;
+  /** дзеркалити по x; за замовчуванням false, тому дані, які його не задають,
+   *  малюються як малювались */
+  flip?: boolean;
   mods?: Mod[];
 }
 
@@ -199,6 +199,20 @@ export interface TowerPart {
   stats?: PartStats;
   /** штрихи в 0..1 коробки деталі: одне джерело і для обведення, і для випікання */
   outline: Vec2[][];
+
+  // --- рівні вежі (тільки lane mode, data/towerTiers.json) ------------------
+  // Деталі лабіринту цих полів не мають, тому для нього нічого не змінюється.
+
+  /** підпис рівня на розвилці */
+  title?: string;
+  /** у які деталі-основи цей рівень може дорости (див. build.promote) */
+  next?: string[];
+  /** які роди деталей приймає кожне кріплення; без цього — приймає будь-що */
+  socketKinds?: Record<string, string[]>;
+  /** кріплення, у яких деталь дзеркалиться по x */
+  socketFlip?: string[];
+  /** власна механіка гілки; читає laneGame, не модель */
+  perk?: { shield?: number; guns?: number };
 }
 
 export interface Combo {
@@ -219,6 +233,18 @@ export interface TowerParts {
   templates?: Record<string, TemplateStep[]>;
   combos: Combo[];
   parts: Record<string, TowerPart>;
+}
+
+// --- data/towerTiers.json (тільки lane mode) --------------------------------
+
+/** Рівні вежі. Форма деталі та сама — рівень це і є деталь-основа. */
+export interface TowerTiers {
+  _?: string;
+  _fields?: string;
+  _art?: string;
+  /** з чого починається вежа режиму */
+  template: TemplateStep[];
+  tiers: Record<string, TowerPart>;
 }
 
 // --- риг --------------------------------------------------------------------

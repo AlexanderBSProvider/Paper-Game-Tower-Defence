@@ -1,8 +1,13 @@
 // Склад башти: які деталі поставлені й куди.
 //
-// Це і є апгрейд-дерево гри, тільки комбінаторне: башта не має рівнів, вона
-// має склад. Дві башти з тих самих деталей, зібрані по-різному, — різні башти,
-// бо частина статів рахується з геометрії конструкції, а не з суми чисел.
+// Це і є апгрейд-дерево гри, тільки комбінаторне: дві башти з тих самих
+// деталей, зібрані по-різному, — різні башти, бо частина статів рахується з
+// геометрії конструкції, а не з суми чисел.
+//
+// Рівень башти окремою сутністю тут НЕ заведений, і це навмисно: рівень — це
+// деталь-основа в каталозі (див. promote). Тому силует кожного рівня —
+// авторський цілісний малюнок, обводиться тією самою рамкою, що деталі, а
+// вищий рівень дає далекобійність сам собою через metrics().height.
 //
 // Без Pixi: сюди приходять дані каталогу, звідси виходять числа й опис рига.
 // Тому все це ганяється з node.
@@ -25,8 +30,6 @@ export interface BuildNode {
   quality: number;
   x: number;
   y: number;
-  /** скільки разів деталь переобведено, 0..MAX_INK */
-  ink: number;
 }
 
 /** Вільне місце кріплення з абсолютними координатами. */
@@ -35,6 +38,15 @@ export interface Socket {
   name: string;
   x: number;
   y: number;
+  /**
+   * Які роди деталей приймає це кріплення (`socketKinds` господаря).
+   * `undefined` = приймає будь-що: деталі лабіринту типізації не мають, і
+   * фільтр для них не з'являється.
+   */
+  accepts?: string[];
+  /** Чи дзеркалиться деталь по x — інакше ствол у лівому кріпленні дивиться
+   *  у вежу. */
+  flip?: boolean;
 }
 
 /** Виміри силуету — те, через що позиція деталі має значення. */
@@ -78,44 +90,9 @@ export type AddResult =
   | { ok: true; id: number }
   | { ok: false; reason: string };
 
-export type ReinkResult =
-  | { ok: true; ink: number }
+export type PromoteResult =
+  | { ok: true; dropped: BuildNode[] }
   | { ok: false; reason: string };
-
-/** Стеля переобведення: далі деталь не темнішає, щоб не перетворилась на пляму. */
-export const MAX_INK = 5;
-
-/**
- * Множник від переобведення.
- *
- * Рівень 0 дає рівно 1.0, і це не випадковість: лабіринт ніколи не переобводить,
- * тож його баланс лишається байт-у-байт тим самим. Уся вісь працює тільки там,
- * де її вмикають.
- */
-export const inkMul = (ink: number) => 1 + 0.15 * Math.min(Math.max(ink, 0), MAX_INK);
-
-/**
- * Наскільки деталь підростає від переобведення.
- *
- * Одне джерело і для метрик, і для рига — інакше вони розійдуться, і
- * намальоване перестане збігатись із порахованим.
- *
- * Через це переобведення має сенс і для деталей БЕЗ статів: заготовка не має
- * чого множити через inkMul, зате підростає, а виміри силуету дають радіус.
- * Без цього гравець платив би за переобведення тумби рівно нічого.
- */
-export const inkScale = (ink: number) => 1 + 0.04 * Math.min(Math.max(ink, 0), MAX_INK);
-
-/**
- * Чи є що підсилювати в цій деталі.
- *
- * Заготовка (тумба, бочка) статів не має — це кріплення, не зброя. Множити в
- * неї нема чого, а inkScale дає лише мізер через виміри силуету, тож брати
- * повну ціну за переобведення було б продажем порожнечі. UI питає це наперед,
- * щоб не давати гравцеві обвести деталь і аж потім отримати відмову.
- */
-export const canReink = (n: Pick<BuildNode, 'part' | 'ink'>) =>
-  n.ink < MAX_INK && Object.values(n.part.stats ?? {}).some((v) => (v ?? 0) > 0);
 
 export interface BuildCfg {
   base?: { rate?: number; range?: number };
@@ -127,8 +104,8 @@ export interface Build {
   readonly nodes: BuildNode[];
   add(partId: string, at?: { node: number; name: string } | null, quality?: number): AddResult;
   remove(id: number): BuildNode[];
-  /** Обвести вже поставлену деталь ще раз: рівень +1, стати ростуть. */
-  reink(id: number, quality?: number): ReinkResult;
+  /** Дорости рівень: у вузлі міняється деталь, поставлене лишається на місці. */
+  promote(id: number, partId: string): PromoteResult;
   freeSockets(): Socket[];
   metrics(): Metrics;
   stats(): Stats;
@@ -184,7 +161,11 @@ export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg 
     for (const n of nodes) {
       for (const [name, off] of Object.entries(n.part.sockets ?? {})) {
         if (taken(n.id, name)) continue;
-        out.push({ node: n.id, name, x: n.x + off[0], y: n.y + off[1] });
+        out.push({
+          node: n.id, name, x: n.x + off[0], y: n.y + off[1],
+          accepts: n.part.socketKinds?.[name],
+          flip: n.part.socketFlip?.includes(name),
+        });
       }
     }
     return out;
@@ -206,7 +187,7 @@ export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg 
 
     if (!at) {
       if (nodes.length) return { ok: false, reason: 'заготовка вже є' };
-      const n: BuildNode = { id: nextId++, partId, part, parent: null, socket: null, quality, x: 0, y: 0, ink: 0 };
+      const n: BuildNode = { id: nextId++, partId, part, parent: null, socket: null, quality, x: 0, y: 0 };
       nodes.push(n);
       return { ok: true, id: n.id };
     }
@@ -219,33 +200,62 @@ export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg 
 
     const n: BuildNode = {
       id: nextId++, partId, part, parent: host.id, socket: at.name, quality,
-      x: host.x + off[0], y: host.y + off[1], ink: 0,
+      x: host.x + off[0], y: host.y + off[1],
     };
     nodes.push(n);
     return { ok: true, id: n.id };
   }
 
   /**
-   * Обвести вже поставлену деталь ще раз.
+   * Розсадити дітей заново по кріпленнях господаря.
    *
-   * Це друга вісь росту, і без неї вежа впирається в стелю, щойно заповнено
-   * сокети: місця більше немає, а сильнішати нема куди. Тут місце не потрібне —
-   * росте те, що вже стоїть.
-   *
-   * @param quality якість переобведення; підмішується в наявну, а не заміняє —
-   *   одне недбале обведення не має знецінити старанну деталь, і навпаки.
+   * Координати вузлів абсолютні (див. add), тому щойно в господаря змінилась
+   * деталь — а з нею й зсуви сокетів, — усе, що на ньому трималось, стоїть не
+   * там. Перерахунок іде від господаря вниз і абсолютними значеннями, а не
+   * дельтами: так онуки не можуть поїхати двічі.
    */
-  function reink(id: number, quality = 1): ReinkResult {
+  function reseat(id: number) {
+    const host = byId(id);
+    if (!host) return;
+    for (const c of nodes) {
+      if (c.parent !== id) continue;
+      const off = host.part.sockets?.[c.socket!] ?? [0, 0];
+      c.x = host.x + off[0];
+      c.y = host.y + off[1];
+      reseat(c.id);
+    }
+  }
+
+  /**
+   * Дорости рівень: у вузлі міняється деталь, поставлене лишається на місці.
+   *
+   * Це і є вісь глибини замість переобведення. Рівень вежі — не окрема
+   * сутність, а деталь-основа в каталозі: тому силует кожного рівня —
+   * авторський цілісний малюнок, обводиться тією самою рамкою, і вищий рівень
+   * дає далекобійність сам собою через metrics().height, без жодного нового
+   * стату.
+   *
+   * @returns деталі, які зняло: у новому силуеті їхнього кріплення немає, і
+   *   лишити їх висіти в повітрі гірше, ніж віддати назовні — гра поверне за
+   *   них чорнило.
+   */
+  function promote(id: number, partId: string): PromoteResult {
     const n = byId(id);
     if (!n) return { ok: false, reason: 'немає такої деталі' };
-    if (n.ink >= MAX_INK) return { ok: false, reason: 'темніше вже нікуди' };
-    // Деталь без статів множити нема чого. inkScale дає їй мізерний приріст
-    // радіуса через виміри силуету (заміряно: +0.008 за рівень), і брати за це
-    // повну ціну було б продажем порожнечі. Заготовка — кріплення, не зброя.
-    if (!canReink(n)) return { ok: false, reason: 'цю деталь нема чим підсилити' };
-    n.ink++;
-    n.quality = (n.quality + clamp01(quality)) / 2;
-    return { ok: true, ink: n.ink };
+    const part = catalogue[partId];
+    if (!part) return { ok: false, reason: 'немає такої деталі' };
+    if (!(n.part.next ?? []).includes(partId)) return { ok: false, reason: 'туди вежа не доростає' };
+
+    n.partId = partId;
+    n.part = part;
+
+    const dropped: BuildNode[] = [];
+    // Знімок дітей беремо ДО зняття: remove() чистить масив вузлів.
+    for (const c of nodes.filter((k) => k.parent === id)) {
+      if (!part.sockets?.[c.socket!]) dropped.push(...remove(c.id));
+    }
+    reseat(id);
+    return { ok: true, dropped };
   }
 
   /** Зняти деталь разом з усім, що на ній трималось. @returns знято */
@@ -271,10 +281,7 @@ export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg 
     let spikes = 0, round = 0, l = 0, r = 0;
 
     for (const n of nodes) {
-      // Переобведена деталь більша — і в метриках теж, бо саме такою її й
-      // намальовано (див. inkScale). Рівень 0 дає 1, тож лабіринт не зачеплено.
-      const grow = inkScale(n.ink);
-      const w = n.part.size[0] * grow, h = n.part.size[1] * grow;
+      const w = n.part.size[0], h = n.part.size[1];
       // Коробка рахується від піво́та деталі: у ствола він біля кріплення, а не
       // внизу по центру, інакше горизонтальна деталь «додавала б висоти».
       const [px, py] = n.part.pivot ?? [0.5, 1];
@@ -316,7 +323,7 @@ export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg 
   function stats(): Stats {
     const m = metrics();
     const sum = (key: keyof PartStats) => nodes.reduce(
-      (a, n) => a + (n.part.stats?.[key] ?? 0) * qualityMul(n.quality) * inkMul(n.ink), 0,
+      (a, n) => a + (n.part.stats?.[key] ?? 0) * qualityMul(n.quality), 0,
     );
 
     const out: Stats = {
@@ -359,10 +366,11 @@ export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg 
           pos: n.parent == null ? ([0, 0] as Vec2) : off,
           pivot: n.part.pivot ?? [0.5, 1],
           pen: n.part.pen ?? 'blue',
-          // Переобведене видно оком, а не лише в цифрах: деталь підростає.
-          // Той самий inkScale, що й у metrics() — щоб намальоване й пораховане
-          // не розійшлись.
-          scale: inkScale(n.ink),
+          // Дзеркалення задає кріплення господаря, а не сама деталь: один
+          // ствол малюється раз і дивиться назовні з обох боків вежі.
+          flip: n.parent == null
+            ? undefined
+            : byId(n.parent)!.part.socketFlip?.includes(n.socket!) || undefined,
           mods,
         };
       }),
@@ -371,7 +379,7 @@ export function createBuild(catalogue: Record<string, TowerPart>, cfg: BuildCfg 
 
   return {
     nodes,
-    add, remove, reink, freeSockets, metrics, stats, rigDef,
+    add, remove, promote, freeSockets, metrics, stats, rigDef,
     get empty() { return nodes.length === 0; },
   };
 }

@@ -17,7 +17,7 @@ import { createGrid, lineCells, WALL, BASE } from '../dist/model/grid.js';
 import { computeFlow, reaches, stepFrom, routeFrom, simplify, wouldSeal } from '../dist/model/flow.js';
 import { createWallet } from '../dist/model/economy.js';
 import { makeTemplate, scoreTrace, magnetize, resample, nearestOn } from '../dist/model/trace.js';
-import { createBuild, qualityMul, gunOf, inkMul, canReink, MAX_INK } from '../dist/model/build.js';
+import { createBuild, qualityMul, gunOf } from '../dist/model/build.js';
 import { chainTargets, oppositeTarget } from '../dist/model/aim.js';
 import { rowY, rowOf, rowHeight } from '../dist/model/lane.js';
 import { createSquad } from '../dist/model/squad.js';
@@ -776,71 +776,223 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
   }
 }
 
-// --- переобведення деталі ---------------------------------------------------
-// Друга вісь росту вежі. Найтихіший спосіб зламати: зробити так, щоб рівень 0
-// давав не рівно 1.0 — тоді мовчки поїде баланс лабіринту, який переобведення
-// не використовує взагалі.
+// --- рівні вежі (lane mode) -------------------------------------------------
+// Друга вісь росту, замість переобведення деталі. Рівень — це деталь-основа в
+// каталозі, тому найтихіший спосіб зламати: змінити стати складу так, що мовчки
+// поїде баланс лабіринту, який рівнів не має взагалі.
 {
-  assert.equal(inkMul(0), 1, 'рівень 0 мусить давати рівно 1.0, інакше поїде лабіринт');
-  assert.ok(inkMul(1) > inkMul(0), 'переобведення має підсилювати');
-  assert.equal(inkMul(MAX_INK), inkMul(MAX_INK + 99), 'вище стелі не росте');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const TP = JSON.parse(readFileSync(root + 'data/towerparts.json', 'utf8'));
+  const TT = JSON.parse(readFileSync(root + 'data/towerTiers.json', 'utf8'));
 
-  const TP = JSON.parse(readFileSync(
-    fileURLToPath(new URL('../data/towerparts.json', import.meta.url)), 'utf8'));
-
-  const b = createBuild(TP.parts, TP);
-  b.add('stump', null, 1);
-  const spikes = b.add('spikes', { node: b.nodes[0].id, name: 'left' }, 1);
-  assert.ok(spikes.ok);
-
-  const dmg0 = b.stats().damage;
-  assert.equal(b.nodes.find((n) => n.id === spikes.id).ink, 0, 'нова деталь має ink 0');
-
-  const r = b.reink(spikes.id, 1);
-  assert.ok(r.ok && r.ink === 1, 'переобведення не підняло рівень');
-  assert.ok(b.stats().damage > dmg0, 'переобведення не додало шкоди');
-
-  // Стеля тримається, і зайвий раз чорнило не бере.
-  for (let i = 1; i < MAX_INK; i++) assert.ok(b.reink(spikes.id, 1).ok, `рівень ${i + 1} не став`);
-  const capped = b.reink(spikes.id, 1);
-  assert.ok(!capped.ok, 'переобведення пробило стелю');
-  assert.equal(b.nodes.find((n) => n.id === spikes.id).ink, MAX_INK);
-
-  assert.ok(!b.reink(999, 1).ok, 'переобвели неіснуючу деталь');
-
-  // Деталь БЕЗ статів переобводити не можна, і це не дрібниця: заміряно, що
-  // inkScale дає тумбі +0.008 радіуса за рівень при ціні 12 чорнила. Мовчки
-  // продавати таке — гірше, ніж чесно відмовити.
+  // Лабіринт не поїхав.
+  //
+  // Числа зняті з коду ДО видалення ink-шару (git show HEAD~:src/model/build.ts,
+  // звірено на чотирьох складах, включно з metrics): inkMul(0) був рівно 1.0, а
+  // inkScale(0) рівно 1, тому склад мусить давати те саме до останнього знака.
+  // Якщо цей assert упав — поїхав баланс робочої гри, а не режиму.
   {
-    const c = createBuild(TP.parts, TP);
-    c.add('stump', null, 1);
-    assert.equal(TP.parts.stump.stats, undefined, 'тест утратив сенс: у тумби зʼявились стати');
-    const base = c.nodes[0];
-    assert.equal(canReink(base), false, 'заготовку не мало б бути дозволено переобводити');
-    const r = c.reink(base.id, 1);
-    assert.ok(!r.ok, 'заготовку переобвели, хоч підсилювати в ній нема чого');
-    assert.equal(base.ink, 0, 'відмовлене переобведення все одно підняло рівень');
-
-    // А зброю — можна, і вона від цього росте.
-    const w = c.add('spikes', { node: base.id, name: 'left' }, 1);
-    const node = c.nodes.find((n) => n.id === w.id);
-    assert.equal(canReink(node), true, 'зброю мало б бути дозволено переобводити');
-    const dmg0 = c.stats().damage;
-    assert.ok(c.reink(w.id, 1).ok);
-    assert.ok(c.stats().damage > dmg0, 'переобведення зброї не дало шкоди');
-
-    // canReink закривається на стелі — UI питає саме його, тому воно мусить
-    // враховувати не лише стати.
-    while (c.reink(w.id, 1).ok) { /* до стелі */ }
-    assert.equal(canReink(node), false, 'canReink не бачить стелі');
+    const b = createBuild(TP.parts, TP);
+    b.add('stump', null, 1);
+    b.add('cannon', { node: b.nodes[0].id, name: 'right' }, 1);
+    b.add('spikes', { node: b.nodes[0].id, name: 'left' }, 1);
+    const s = b.stats();
+    near(s.damage, 20.125);
+    near(s.splash, 1.5);
+    near(s.rate, 1);
+    near(s.crit, 0.25);
+    near(s.range, 3.419612188365651);
+    near(s.metrics.height, 1.0499999999999998);
+    near(s.metrics.topMass, 0.47403047091412726);
   }
 
-  // Опис рига несе рівень назовні — інакше гравець не побачив би різниці.
-  const def = b.rigDef();
-  const grown = def.parts.find((p) => p.part === 'spikes');
-  assert.ok(grown.scale > 1, 'переобведена деталь не підросла у rigDef');
-  const base = def.parts.find((p) => p.part === 'stump');
-  assert.equal(base.scale, 1, 'необведена деталь мусить лишитись розміру 1');
+  // Каталог режиму — та сама копія, що збирає main.ts.
+  const laneParts = { ...TP.parts, ...TT.tiers };
+  const cfg = { ...TP, parts: laneParts };
+
+  // Дані рівнів: сюди легко дописати гілку, яка нікуди не веде, і панель
+  // показала б карточку, що нічого не робить.
+  for (const [id, t] of Object.entries(TT.tiers)) {
+    assert.ok(t.title, `рівень ${id}: немає підпису`);
+    assert.equal(typeof t.cost, 'number', `рівень ${id}: немає ціни`);
+    assert.ok(t.outline?.length, `рівень ${id}: немає контуру`);
+    for (const [i, s] of t.outline.entries()) {
+      assert.ok(s.length >= 2, `рівень ${id}: штрих ${i} з однієї точки`);
+    }
+    for (const n of t.next ?? []) {
+      assert.ok(TT.tiers[n], `рівень ${id} доростає в ${n}, якого немає`);
+    }
+    // Ключі типізації й дзеркалення мусять указувати на наявні кріплення:
+    // помилка в імені зробила б фільтр беззубим і НЕ впала б сама.
+    for (const k of Object.keys(t.socketKinds ?? {})) {
+      assert.ok(t.sockets?.[k], `рівень ${id}: socketKinds знає кріплення ${k}, якого немає`);
+    }
+    for (const k of t.socketFlip ?? []) {
+      assert.ok(t.sockets?.[k], `рівень ${id}: socketFlip знає кріплення ${k}, якого немає`);
+    }
+    // Кожне кріплення мусить приймати РІВНО ті роди, які є в каталозі: рід із
+    // опискою не приймав би нічого, і сокет виглядав би зламаним.
+    for (const [name, kinds] of Object.entries(t.socketKinds ?? {})) {
+      assert.ok(kinds.length, `рівень ${id}: кріплення ${name} не приймає нічого`);
+      for (const kind of kinds) {
+        assert.ok(
+          Object.values(laneParts).some((p) => p.kind === kind),
+          `рівень ${id}: кріплення ${name} чекає рід ${kind}, якого немає в каталозі`,
+        );
+      }
+      // Зброя не мішається з оздобленням, і це головне правило типізації: саме
+      // з такого кріплення й виходила химера — ствол на даху, морда на шпилі.
+      assert.ok(
+        !kinds.includes('weapon') || kinds.length === 1,
+        `рівень ${id}: кріплення ${name} приймає і зброю, і ${kinds.filter((k) => k !== 'weapon')}`,
+      );
+    }
+    // Кожне кріплення мусить бути типізоване: одне нетипізоване й пускає будь-що.
+    for (const name of Object.keys(t.sockets ?? {})) {
+      assert.ok(t.socketKinds?.[name], `рівень ${id}: кріплення ${name} нетипізоване`);
+    }
+  }
+
+  // Рівень мусить мати куди ставити зброю — інакше вежа не стріляє взагалі.
+  for (const [id, t] of Object.entries(TT.tiers)) {
+    const guns = Object.values(t.socketKinds ?? {}).filter((k) => k.includes('weapon'));
+    assert.ok(guns.length, `рівень ${id}: немає жодного кріплення під зброю`);
+  }
+
+  // Шаблон режиму мусить збиратись: перша деталь — рівень, решта в наявні
+  // кріплення потрібного роду.
+  {
+    const b = createBuild(laneParts, cfg);
+    for (const [partId, host, socket] of TT.template) {
+      const res = b.add(partId, host == null ? null : { node: b.nodes[host].id, name: socket }, 1);
+      assert.ok(res.ok, `шаблон lane: ${partId} не став (${res.reason})`);
+    }
+    assert.equal(b.nodes[0].partId, 't1', 'вежа режиму мусить починатись з рівня t1');
+    assert.ok(b.stats().damage > 0, 'вежа режиму стартує без зброї');
+  }
+
+  // Типізація кріплень — те, чим прибита химера.
+  {
+    const b = createBuild(laneParts, cfg);
+    b.add('t2_fort', null, 1);
+    const top = b.freeSockets().find((k) => k.name === 'top');
+    assert.ok(top.accepts?.includes('top'), 'дах не приймається на верх Форту');
+    assert.ok(!top.accepts.includes('weapon'), 'на верх Форту пускають зброю');
+    const trim = b.freeSockets().find((k) => k.name === 'trim_l');
+    assert.equal(trim.flip, true, 'ліве кріплення Форту не дзеркалить деталь');
+
+    // Деталі лабіринту типізації не мають — саме тому там нічого не змінилось.
+    const m = createBuild(TP.parts, TP);
+    m.add('stump', null, 1);
+    assert.equal(m.freeSockets()[0].accepts, undefined, 'у деталі лабіринту зʼявився accepts');
+    assert.equal(m.freeSockets()[0].flip, undefined, 'у деталі лабіринту зʼявився flip');
+  }
+
+  // promote: що стоїть на наявних кріпленнях — лишається, решта віддається.
+  {
+    const b = createBuild(laneParts, cfg);
+    b.add('t1', null, 1);
+    const gun = b.add('crossbow', { node: b.nodes[0].id, name: 'gun_r' }, 1);
+    const top = b.add('roof', { node: b.nodes[0].id, name: 'top' }, 1);
+    assert.ok(gun.ok && top.ok);
+
+    assert.ok(!b.promote(b.nodes[0].id, 't3_fort').ok, 'перескочили рівень');
+    assert.ok(!b.promote(b.nodes[0].id, 'stump').ok, 'доросли в те, чого немає в next');
+    assert.ok(!b.promote(999, 't2_fort').ok, 'дорос неіснуючий вузол');
+    assert.ok(!b.promote(b.nodes[0].id, 'немає_такого').ok, 'дорос у деталь, якої немає в каталозі');
+
+    const range0 = b.stats().range;
+    const res = b.promote(b.nodes[0].id, 't2_arsenal');
+    assert.ok(res.ok, 'рівень не став');
+    assert.equal(b.nodes[0].partId, 't2_arsenal');
+    // В Арсеналу є і gun_r, і top — обидві деталі мусять уціліти.
+    assert.equal(res.dropped.length, 0, `Арсенал збив ${res.dropped.length} деталей, а не мав`);
+    assert.ok(b.nodes.some((n) => n.partId === 'crossbow'), 'ствол зник, хоч кріплення є');
+    assert.ok(b.nodes.some((n) => n.partId === 'roof'), 'дах зник, хоч кріплення є');
+    // Вежа вища — і дістає далі, без жодного окремого стату на рівні.
+    assert.ok(b.stats().range > range0, 'вищий рівень не дав далекобійності');
+
+    // Дітей розсадило по НОВИХ кріпленнях, а не лишило на старих координатах.
+    const g = b.nodes.find((n) => n.partId === 'crossbow');
+    const off = laneParts.t2_arsenal.sockets.gun_r;
+    near(g.x, off[0], 1e-9);
+    near(g.y, off[1], 1e-9);
+  }
+
+  // А тут кріплення зникає — і деталь мусить повернутись назовні, а не зависнути.
+  {
+    const b = createBuild(laneParts, cfg);
+    b.add('t2_fort', null, 1);
+    assert.equal(laneParts.t3_fort.sockets.trim_l, undefined, 'тест утратив сенс: у Цитаделі зʼявилось trim_l');
+    const face = b.add('face', { node: b.nodes[0].id, name: 'face' }, 1);
+    const wheels = b.add('wheels', { node: b.nodes[0].id, name: 'trim_l' }, 1);
+    assert.ok(face.ok && wheels.ok);
+
+    const res = b.promote(b.nodes[0].id, 't3_fort');
+    assert.ok(res.ok);
+    assert.ok(b.nodes.some((n) => n.partId === 'face'), 'морда зникла, хоч кріплення є');
+    assert.equal(res.dropped.length, 1, 'колеса лишились висіти без кріплення');
+    assert.equal(res.dropped[0].partId, 'wheels');
+    assert.ok(!b.nodes.some((n) => n.partId === 'wheels'), 'збите лишилось у складі');
+  }
+
+  // Найширша вежа мусить уміщатись між своїм місцем і передньою колонкою
+  // загону. Дописати рівень ширший за коридор дуже легко, а на екрані це
+  // виглядало б як вежа, що стоїть на власних союзниках.
+  {
+    const LL = JSON.parse(readFileSync(root + 'data/laneLevel.json', 'utf8'));
+    let worst = 0, worstId = '';
+    for (const [id, t] of Object.entries(TT.tiers)) {
+      const b = createBuild(laneParts, cfg);
+      b.add(id, null, 1);
+      // Найважчий випадок: у кожне кріплення зброї — найдовший ствол каталогу.
+      for (const [name, kinds] of Object.entries(t.socketKinds ?? {})) {
+        if (kinds.includes('weapon')) b.add('cannon', { node: b.nodes[0].id, name }, 1);
+      }
+      const half = b.metrics().width / 2;
+      if (half > worst) { worst = half; worstId = id; }
+    }
+    const room = LL.squad.xLeft - LL.towerX;
+    assert.ok(worst <= room, `${worstId} завширшки ${worst} клітинок при ${room} до загону`);
+  }
+
+  // Якість обведення силуету мусить на щось впливати: інакше гравець старанно
+  // проводить велику фігуру, і це нічого не дає. Впливає вона через stats
+  // рівня, тому рівень БЕЗ статів — це тихо змарнована рука.
+  for (const [id, t] of Object.entries(TT.tiers)) {
+    if (!t.cost) continue; // t1 не купують, його обведення не буває
+    assert.ok(
+      Object.values(t.stats ?? {}).some((v) => v > 0),
+      `рівень ${id} платний, але без статів — якість його обведення нікуди не йде`,
+    );
+  }
+  {
+    const mk = (q) => {
+      const b = createBuild(laneParts, cfg);
+      b.add('t2_fort', null, q);
+      return b.stats().range;
+    };
+    assert.ok(mk(1) > mk(0), 'старанно обведений рівень не дає більше за недбалий');
+  }
+
+  // Перки гілок читає laneGame, але лежать вони в даних — і мусять бути різні,
+  // інакше «своя механіка гілки» існує лише на словах.
+  assert.equal(TT.tiers.t2_fort.perk.shield, 2);
+  assert.equal(TT.tiers.t2_arsenal.perk.guns, 2);
+  assert.ok(TT.tiers.t3_fort.perk.shield > TT.tiers.t2_fort.perk.shield, 'Цитадель не сильніша за Форт');
+
+  // Дзеркалення виходить у риг: без цього ствол у лівому кріпленні дивився б
+  // у вежу, і на числах цього не побачити.
+  {
+    const b = createBuild(laneParts, cfg);
+    b.add('t3_fort', null, 1);
+    b.add('cannon', { node: b.nodes[0].id, name: 'gun_l' }, 1);
+    b.add('cannon', { node: b.nodes[0].id, name: 'gun_r' }, 1);
+    const def = b.rigDef();
+    const guns = def.parts.filter((p) => p.part === 'cannon');
+    assert.equal(guns.filter((p) => p.flip).length, 1, 'дзеркалиться не рівно один ствол');
+    assert.equal(def.parts[0].flip, undefined, 'основа не мусить дзеркалитись');
+  }
 }
 
 // --- lane mode: дані рівня й союзників --------------------------------------
