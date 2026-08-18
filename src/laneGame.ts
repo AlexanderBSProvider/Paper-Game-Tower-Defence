@@ -11,9 +11,10 @@
 // Координати — клітинки світу, як усюди. Своє ядро (laneLevel.core), бо
 // look.core 15x26 задане під портретний лабіринт, а тут світ лежить навпаки.
 
-import { Container, Graphics, Texture } from '../lib/pixi.min.mjs';
+import { Container, Graphics, Renderer, Texture } from '../lib/pixi.min.mjs';
 import { penStroke } from './view/ink.js';
 import { buildRig } from './view/rig.js';
+import { bakeTrace } from './view/procart.js';
 import { createWallet } from './model/economy.js';
 import { createCombat } from './combat.js';
 import { createBuild, gunOf } from './model/build.js';
@@ -25,7 +26,7 @@ import type { Build, Stats } from './model/build.js';
 import type { Combat } from './combat.js';
 import type { Wallet } from './model/economy.js';
 import type {
-  Balance, Enemy, Fx, Layout, Look, Parts, Rig, RigDefs, TowerParts,
+  Balance, Enemy, Fx, Layout, Look, Parts, Rig, RigDef, RigDefs, TowerParts, Vec2,
 } from './types.js';
 
 /** Ворог у режимі: той самий Enemy, плюс ряд. combat.ts приймає Enemy[], і
@@ -52,6 +53,8 @@ export interface LaneState {
 
 export interface LaneGameOpts {
   world: Container;
+  /** потрібен, щоб пекти обведене гравцем у текстуру союзника на рантаймі */
+  renderer: Renderer;
   look: Look;
   level: LaneLevel;
   allies: Allies;
@@ -101,8 +104,13 @@ export interface LaneGame {
   reinkCost(nodeId: number): number;
   /** Загін перед вежею: мілі тримають рух, ренжові стріляють через combat. */
   squad: Squad;
-  /** Намалювати союзника в ряд. Повний ряд виштовхує найслабшого. */
-  addAlly(kind: AllyKind, row: number, quality?: number): AddAllyOutcome;
+  /**
+   * Намалювати союзника в ряд. Повний ряд виштовхує найслабшого.
+   * @param outline штрихи з рамки обведення; без них береться контур із даних
+   */
+  addAlly(
+    kind: AllyKind, row: number, quality?: number, outline?: Vec2[][],
+  ): AddAllyOutcome;
   update(dtMs: number): void;
   rescale(s: number): void;
   resize(): void;
@@ -116,7 +124,8 @@ const TOWER_ID = 0;
 const TEMPLATE = 'magic_tower';
 
 export function createLaneGame({
-  world, look, level, allies, balance, rigDefs, parts, textures, layout, towerParts, partTex,
+  world, renderer, look, level, allies, balance, rigDefs, parts, textures, layout,
+  towerParts, partTex,
 }: LaneGameOpts): LaneGame {
   const band: Band = { y0: level.band.y0, y1: level.band.y1, rows: level.rows };
   const towerX = level.towerX;
@@ -293,17 +302,60 @@ export function createLaneGame({
     melee: allies.melee.stats, ranged: allies.ranged.stats,
   });
 
-  /** Риги союзників за id: у combat вони заводяться під тим самим id, тому
-   *  зняти союзника — це зняти риг і виписати його з бою одним ключем. */
-  const allyRigs = new Map<number, Rig>();
+  /** Малюнок союзника за id: риг і його ВЛАСНА текстура. У combat він заведений
+   *  під тим самим id, тому зняти союзника — це один ключ на все. */
+  const allyArt = new Map<number, { rig: Rig; tex: Texture }>();
 
   /** Союзники беруть id від 1: нуль назавжди за вежею. */
   const allyCombatId = (a: Ally) => a.id;
 
   function dropAlly(a: Ally) {
-    const rig = allyRigs.get(a.id);
-    if (rig) { unplace(rig); allyRigs.delete(a.id); }
+    const art = allyArt.get(a.id);
+    if (art) {
+      unplace(art.rig);
+      // Текстура в кожного своя — вона ж і є те, що намалював гравець. Спільні
+      // маски каталогу так знімати не можна, а цю не зняти означає лишати
+      // рендер-таргет у пам'яті на кожного полеглого.
+      art.tex.destroy(true);
+      allyArt.delete(a.id);
+    }
     combat.remove(allyCombatId(a));
+  }
+
+  /**
+   * Риг союзника з обведених штрихів.
+   *
+   * Гравець бачить у бою рівно те, що провів рукою: `bakeTrace` пече штрихи в
+   * маску тим самим кодом, що каталог деталей вежі. Далі це звичайний риг з
+   * одної частини — тому дихання, замах і хіт-реакція дістаються задарма, без
+   * жодного окремого «спрайт-союзника» в рендері.
+   */
+  function traceRig(kind: AllyKind, outline: Vec2[][]) {
+    const size = allies[kind].size;
+    const tex = bakeTrace(renderer, outline, size, look);
+    const def: RigDef = {
+      hitbox: size,
+      anchors: {
+        hit: [0, -size[1] * 0.5],
+        // Постріл вилітає з фігури, а не з-під ніг: у лучника це висота рук.
+        muzzle: [size[0] * 0.45, -size[1] * 0.45],
+        ground: [0, size[1] / 2],
+      },
+      parts: [{
+        part: 'trace',
+        // Піво́т знизу, а зсув на півросту вгору: фігура сідає центром на лінію
+        // ряду, як і ворог, тому сортування за y лишається чесним.
+        pos: [0, size[1] / 2], pivot: [0.5, 1], pen: allies[kind].pen,
+        mods: [
+          { type: 'squash', amp: 0.05, freq: 1.1 },
+          { type: 'bob', amp: 0.04, freq: 1.1 },
+          { type: 'swing', amp: 9 },
+        ],
+      }],
+    };
+    // Один запис у мапі текстур і один розмір — саме те, чого чекає buildRig.
+    const rig = buildRig(def, new Map([['trace', tex]]), { trace: { size } }, look);
+    return { rig, tex };
   }
 
   /**
@@ -313,7 +365,10 @@ export function createLaneGame({
    * це рикошет, сплеш і комбо працюють для нього безплатно. Мілі в combat не
    * потрапляє: він б'є впритул, і його цикл нижче, в update().
    */
-  function addAlly(kind: AllyKind, row: number, quality = 1): AddAllyOutcome {
+  function addAlly(
+    kind: AllyKind, row: number, quality = 1,
+    outline: Vec2[][] = allies[kind].outline,
+  ): AddAllyOutcome {
     const price = allies[kind].cost;
     if (wallet.ink < price) return { ok: false, reason: 'мало чорнила' };
 
@@ -326,9 +381,11 @@ export function createLaneGame({
     if (res.replaced) dropAlly(res.replaced);
 
     const a = res.ally;
-    const rig = place(allies[kind].rig ?? 'earling', a.x, rowY(band, a.row));
-    allyRigs.set(a.id, rig);
-    if (a.gun) combat.add(allyCombatId(a), a.gun, rig, a.x, rowY(band, a.row));
+    const y = rowY(band, a.row);
+    const art = traceRig(kind, outline);
+    mount(art.rig, a.x, y);
+    allyArt.set(a.id, art);
+    if (a.gun) combat.add(allyCombatId(a), a.gun, art.rig, a.x, y);
     return { ok: true, ally: a, spent: price };
   }
 
@@ -367,8 +424,7 @@ export function createLaneGame({
     blocker.cd -= dt;
     if (blocker.cd <= 0) {
       blocker.cd = 1 / blocker.rate;
-      const rig = allyRigs.get(blocker.id);
-      rig?.fire('attack');
+      allyArt.get(blocker.id)?.rig.fire('attack');
       damage(e, blocker.damage);
     }
 

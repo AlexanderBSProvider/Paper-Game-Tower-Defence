@@ -21,6 +21,8 @@ import { createTracePad } from './controller/tracepad.js';
 import { createWorkshop } from './controller/workshop.js';
 import { createLaneGame } from './laneGame.js';
 import { createTowerPanel } from './controller/towerPanel.js';
+import { createLaneHud } from './controller/laneHud.js';
+import { createSquadPanel } from './controller/squadPanel.js';
 import type { Allies, LaneLevel } from './model/lane.js';
 import type {
   Balance, Layout, Level, Look, Parts, RigDefs, TowerParts,
@@ -114,22 +116,36 @@ resizers.push((L) => tracePad.resize(L));
 
 if (lane) {
   const laneGame = createLaneGame({
-    world, look, level: laneLevel!, allies: laneAllies!, balance, rigDefs, parts, textures, layout,
-    towerParts, partTex,
+    world, renderer: app.renderer, look, level: laneLevel!, allies: laneAllies!, balance,
+    rigDefs, parts, textures, layout, towerParts, partTex,
   });
   const towerPanel = createTowerPanel({
     canvas: app.canvas, app, hudLayer: hud, worldLayer: world,
     look, layout, game: laneGame, towerParts, tracePad,
   });
+  // ponytail: рестарт через перезавантаження — те саме рішення, що в лабіринті.
+  const laneHud = createLaneHud({
+    hud, look, balance, allies: laneAllies!, game: laneGame, onRestart: () => location.reload(),
+  });
+  // Створюється ПІСЛЯ towerPanel: обробники pointerdown ідуть у порядку
+  // підписки, тож панель вежі встигає підняти busyPointer до того, як загін
+  // побачить той самий тап.
+  const squadPanel = createSquadPanel({
+    canvas: app.canvas, app, layout, game: laneGame, allies: laneAllies!, tracePad, hud: laneHud,
+    blocked: () => tracePad.open || towerPanel.open || towerPanel.busyPointer,
+  });
+
   systems.push((dt) => laneGame.update(dt));
   systems.push((dt) => towerPanel.update(dt / 1000));
+  systems.push(() => laneHud.tick());
   resizers.push((L) => { laneGame.rescale(L.spriteScale); laneGame.resize(); });
   resizers.push(() => towerPanel.resize());
+  resizers.push((L) => laneHud.resize(L));
   phaseOf = () => laneGame.state.phase;
 
   window.__td = {
     app, look, layout, world, hud, paper, state, systems,
-    laneGame, towerPanel, sdk, textures, partTex, tracePad, laneLevel,
+    laneGame, towerPanel, laneHud, squadPanel, sdk, textures, partTex, tracePad, laneLevel,
   };
 } else {
   const game = createGame({

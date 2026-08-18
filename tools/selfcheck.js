@@ -890,6 +890,27 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
   assert.ok(AL.ranged.stats.range > 0, 'ренжовий без радіуса — стрілятиме впритул');
   assert.ok(AL.melee.stats.reach > 0, 'мілі без reach — не зупинить нікого');
 
+  // Ручка союзника. Силует у гравця тепер свій (bakeTrace), але маска біла:
+  // без pen вона малюється дефолтною ручкою, а збіг із ручкою ворога або з
+  // ручкою другого типу не дає ні помилки, ні варнінга — гра працює, а поле
+  // не читається. Один раз ми на це вже наступили.
+  {
+    const RG = JSON.parse(readFileSync(root + 'data/rigs.json', 'utf8'));
+    const BL = JSON.parse(readFileSync(root + 'data/balance.json', 'utf8'));
+    const foes = new Set(
+      Object.values(BL.enemies).map((e) => RG[e.rig]?.parts?.[0]?.pen),
+    );
+    assert.ok(foes.size, 'не знайшлось жодної ручки ворога — перевірка нічого не стереже');
+    for (const kind of ['melee', 'ranged']) {
+      const pen = AL[kind].pen;
+      assert.ok(pen, `${kind}: без pen — маска намалюється дефолтною ручкою`);
+      assert.ok(!foes.has(pen),
+        `${kind}: ручка ${pen} — це ручка ворога, свого не відрізнити від чужого`);
+    }
+    assert.notEqual(AL.melee.pen, AL.ranged.pen,
+      'мілі й ренж однією ручкою — в бою їх не розрізнити, а поводяться вони по-різному');
+  }
+
   // Найголовніше: справжні дані справді дають робочий загін.
   const squad = createSquad({
     rows: LL.rows, cols: LL.squad.cols,

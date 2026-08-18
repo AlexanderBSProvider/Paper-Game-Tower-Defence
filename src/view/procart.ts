@@ -164,29 +164,45 @@ const DOODLES: Record<string, Doodle> = {
 export function bakeCatalogue(
   renderer: Renderer, catalogue: Record<string, TowerPart>, look: Look,
 ): Map<string, Texture> {
-  const px = look.sprite.refCell * look.sprite.supersample;
   const out = new Map<string, Texture>();
-
   for (const [id, def] of Object.entries(catalogue)) {
     if (id.startsWith('_') || !def.outline) continue;
-    const w = def.size[0] * px, h = def.size[1] * px;
-    const lw = Math.max(1.8, Math.min(w, h) * 0.075);
-    const g = new Graphics();
-
-    for (const s of def.outline) {
-      penStroke(g, s.map(([x, y]): Vec2 => [x * w, y * h]), ink({
-        width: lw, jitter: lw * 0.45, step: Math.min(w, h) * 0.2,
-        // Перехльости малі: усе, що вилізе за коробку, обріже кадр текстури.
-        overshoot: lw * 0.7,
-      }));
-    }
-
-    out.set(id, renderer.generateTexture({
-      target: g, frame: new Rectangle(0, 0, w, h), antialias: true,
-    }));
-    g.destroy();
+    out.set(id, bakeTrace(renderer, def.outline, def.size, look));
   }
   return out;
+}
+
+/**
+ * Випікає штрихи в маску розміром size клітинок.
+ *
+ * Те саме, що каталог робить із контуром деталі, — і навмисно тим самим кодом:
+ * сюди приходять штрихи, які щойно провела рука в рамці обведення. Якби це були
+ * дві різні функції, намальоване гравцем поволі розійшлося б виглядом із
+ * каталогом, з якого воно й узялось.
+ *
+ * @param outline штрихи в коробці 0..1 — байдуже, з даних вони чи з-під пальця
+ */
+export function bakeTrace(
+  renderer: Renderer, outline: Vec2[][], size: Vec2, look: Look,
+): Texture {
+  const px = look.sprite.refCell * look.sprite.supersample;
+  const w = size[0] * px, h = size[1] * px;
+  const lw = Math.max(1.8, Math.min(w, h) * 0.075);
+  const g = new Graphics();
+
+  for (const s of outline) {
+    penStroke(g, s.map(([x, y]): Vec2 => [x * w, y * h]), ink({
+      width: lw, jitter: lw * 0.45, step: Math.min(w, h) * 0.2,
+      // Перехльости малі: усе, що вилізе за коробку, обріже кадр текстури.
+      overshoot: lw * 0.7,
+    }));
+  }
+
+  const tex = renderer.generateTexture({
+    target: g, frame: new Rectangle(0, 0, w, h), antialias: true,
+  });
+  g.destroy();
+  return tex;
 }
 
 /**
