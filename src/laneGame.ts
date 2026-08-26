@@ -17,16 +17,16 @@ import { buildRig } from './view/rig.js';
 import { bakeTrace } from './view/procart.js';
 import { createWallet } from './model/economy.js';
 import { createCombat } from './combat.js';
-import { createBuild, gunOf } from './model/build.js';
+import { createKeep } from './model/keep.js';
 import { rowY, rowHeight } from './model/lane.js';
 import { createSquad } from './model/squad.js';
 import type { Allies, Band, LaneLevel } from './model/lane.js';
 import type { Ally, AllyKind, Squad } from './model/squad.js';
-import type { Build, Stats } from './model/build.js';
+import type { DefKind, Defender, Keep, KeepData } from './model/keep.js';
 import type { Combat } from './combat.js';
 import type { Wallet } from './model/economy.js';
 import type {
-  Balance, Enemy, Fx, Layout, Look, Parts, Rig, RigDef, RigDefs, TowerParts, Vec2,
+  Balance, Enemy, Fx, Layout, Look, Mod, Parts, Rig, RigDef, RigDefs, Vec2,
 } from './types.js';
 
 /** Ворог у режимі: той самий Enemy, плюс ряд. combat.ts приймає Enemy[], і
@@ -63,20 +63,21 @@ export interface LaneGameOpts {
   parts: Parts;
   textures: Map<string, Texture>;
   layout: Layout;
-  towerParts: TowerParts;
-  partTex: Map<string, Texture>;
+  keepData: KeepData;
 }
 
 export type AddAllyOutcome =
   | { ok: true; ally: Ally; spent: number }
   | { ok: false; reason: string };
 
-export type AddPartResult =
-  | { ok: true; id: number; spent: number; stats: Stats }
+export type PlaceResult =
+  | { ok: true; floor: number; spent: number; defender: Defender }
   | { ok: false; reason: string };
 
-export type LevelUpResult =
-  | { ok: true; partId: string; spent: number; refunded: number; stats: Stats }
+export type LevelResult = PlaceResult;
+
+export type GrowResult =
+  | { ok: true; level: number; spent: number }
   | { ok: false; reason: string };
 
 export interface LaneGame {
@@ -85,32 +86,35 @@ export interface LaneGame {
   enemies: LaneEnemy[];
   combat: Combat;
   band: Band;
-  /** склад єдиної вежі — те, що доростає панеллю апгрейду */
-  tower: Build;
+  /** Вежа: рівень, гілка, поверхи й хто в них сидить. */
+  keep: Keep;
   towerX: number;
   towerY: number;
   spawnEnemy(row?: number | null, typeId?: string, hpMul?: number): LaneEnemy;
   damage(e: Enemy, amount: number): boolean;
-  /** Домалювати деталь у сокет вежі. Перша вісь росту: вширшки. */
-  addPart(
-    partId: string,
-    at: { node: number; name: string } | null,
-    quality?: number,
-  ): AddPartResult;
+
+  /** Центр поверху в клітинках світу. Нульовий поверх — нижній. */
+  floorY(floor: number): number;
+  /** Висота одного поверху в клітинках. */
+  floorH(): number;
   /**
-   * Дорости рівень вежі. Друга вісь: вглибину. Працює й тоді, коли всі сокети
-   * зайняті, — саме цим вежа не впирається в стелю.
-   * @param partId деталь-основа з `next` поточного рівня
+   * Намалювати захисника в поверх.
+   * @param outline штрихи з рамки; без них береться контур із даних, тому
+   *   виклик із консолі теж працює й дає ідеальний силует
    */
-  levelUp(partId: string, quality?: number): LevelUpResult;
-  /** Скільки лишилось зарядів щита (перк гілки Форту); 0, якщо перка немає. */
-  readonly shield: number;
+  placeDefender(
+    floor: number, kind: DefKind, quality?: number, outline?: Vec2[][],
+  ): PlaceResult;
+  /** Підняти рівень захисника — головна витрата чорнила. */
+  levelDefender(floor: number): LevelResult;
+  /** Рівень вежі: +поверх, +життя. */
+  growKeep(): GrowResult;
+  /** Розвилка гілки, один раз на партію. */
+  pickBranch(id: string): GrowResult;
+
   /**
    * Півширина вежі в клітинках світу: зона, що належить вежі, а не полю.
-   *
-   * Одне джерело для панелі апгрейду й для загону. Раніше в обох стояло по
-   * «1.5», і Цитадель шириною три клітинки з такої зони вилазила: тап по її
-   * краю ставив би союзника замість того, щоб відкрити панель.
+   * Одне джерело для панелі апгрейду й для загону.
    */
   readonly towerReach: number;
   /** Загін перед вежею: мілі тримають рух, ренжові стріляють через combat. */
@@ -127,37 +131,13 @@ export interface LaneGame {
   resize(): void;
 }
 
-/**
- * Іконки комбо — те, чим вони перестають бути невидимими.
- *
- * Комбо були написані в даних і працювали, але на екрані від них не було ні
- * знака: гравець складав пружину зі стволом і не дізнавався, що ввімкнув
- * рикошет. Літер перо не вміє, тому підпис — маленький малюнок, як усе інше
- * на полях. Штрихи в 0..1 коробки.
- */
-const COMBO_ICONS: Record<string, Vec2[][]> = {
-  // рикошет — відскок від стінки
-  ricochet: [[[0.02, 0.2], [0.6, 0.5], [0.02, 0.8]], [[0.75, 0.05], [0.75, 0.95]]],
-  // страх — тремтяча лінія
-  fear: [[[0.05, 0.7], [0.2, 0.3], [0.35, 0.75], [0.5, 0.28], [0.65, 0.72], [0.8, 0.32], [0.95, 0.68]]],
-  // двобічний ствол — у два боки
-  twoWay: [[[0.05, 0.5], [0.95, 0.5]], [[0.28, 0.25], [0.03, 0.5], [0.28, 0.75]], [[0.72, 0.25], [0.97, 0.5], [0.72, 0.75]]],
-};
-
 /** Вежа в combat під фіксованим id: вона тут одна й назавжди. Союзники
  *  пізніше візьмуть id від 1, тому нуль лишається за нею. */
 const TOWER_ID = 0;
 
-/** Другий ствол гілки Арсеналу — окремий запис у combat. Id від'ємний: нуль
- *  за вежею, додатні за союзниками, тому вниз від нуля ніхто не претендує. */
-const TOWER_ID2 = -1;
-
-/** Із чого починається вежа. Далі гравець дороблює її сам. */
-const TEMPLATE = 'lane';
-
 export function createLaneGame({
   world, renderer, look, level, allies, balance, rigDefs, parts, textures, layout,
-  towerParts, partTex,
+  keepData,
 }: LaneGameOpts): LaneGame {
   const band: Band = { y0: level.band.y0, y1: level.band.y1, rows: level.rows };
   const towerX = level.towerX;
@@ -178,6 +158,15 @@ export function createLaneGame({
   world.addChild(laneG, fxLayer, units, shotLayer);
 
   const rigs: Rig[] = [];
+  /**
+   * Риги, які НЕ масштабуються spriteScale: корпус вежі й ті, хто в її поверхах.
+   *
+   * Дрібна клітинка робить фігури більшими за їхній хітбокс, щоб морди читались.
+   * Для вежі це неприпустимо: кімнати мусять лягати на смугу рядів рівно, бо
+   * поверх стріляє з тієї y, на якій намальований, а combat міряє відстань
+   * двовимірно. Роздутий на 1.8 корпус з'їхав би відносно ряду, у який б'є.
+   */
+  const fixed: Rig[] = [];
   const fx: Fx[] = [];
 
   function mount(rig: Rig, x: number, y: number) {
@@ -190,9 +179,6 @@ export function createLaneGame({
 
   const place = (rigId: string, x: number, y: number) =>
     mount(buildRig(rigDefs[rigId], textures, parts, look), x, y);
-
-  const placeBuild = (b: Build, x: number, y: number) =>
-    mount(buildRig(b.rigDef(), partTex, towerParts.parts, look), x, y);
 
   function unplace(rig: Rig) {
     rig.view.destroy({ children: true });
@@ -254,184 +240,254 @@ export function createLaneGame({
   });
 
   // --- вежа ------------------------------------------------------------------
-  // Каталог деталей і комбо ті самі, а база своя: у лабіринті башт багато й
-  // вони стоять упритул до траси, тут вежа одна й мусить діставати через усю
-  // смугу рядів. Правити towerparts.base не можна — це баланс лабіринту.
-  const tower = createBuild(towerParts.parts, {
-    ...towerParts,
-    base: { ...towerParts.base, ...(level.towerBase ?? {}) },
-  });
-  for (const [partId, host, socket] of towerParts.templates?.[TEMPLATE] ?? []) {
-    tower.add(partId, host == null ? null : { node: tower.nodes[host].id, name: socket! }, 1);
-  }
-  let towerRig = placeBuild(tower, towerX, towerY);
-
-  /** Перк гілки живе в деталі-основі: рівень вежі — це вона й є. */
-  const perk = () => tower.nodes[0]?.part.perk ?? {};
-
-  /** Які комбо вже показані — щоб не блимати тим самим на кожній зміні складу. */
-  const shownCombos = new Set<string>();
+  //
+  // Вежа — не склад деталей, а стос поверхів. Кімнати займають смугу рядів
+  // РІВНО, дах стирчить над нею, постамент під нею: стріляють тільки з кімнат,
+  // тому вертикаль засягу рахується саме по смузі. Це не косметика — combat
+  // міряє радіус двовимірно, і кімната, піднята вище смуги, втратила б дальні
+  // ряди мовчки.
+  const keep = createKeep(keepData, level.rows);
 
   /**
-   * Спалах над вежею: увімкнулось комбо.
+   * Кімната = ряд, тому й геометрія в них спільна.
    *
-   * Маркером, бо це єдиний дозволений у стилі залив, і він тут значить рівно
-   * те саме, що в зошиті — «оце важливо».
+   * Це не збіг, а сама суть: combat міряє відстань двовимірно, тому кімната,
+   * зсунута по y відносно свого ряду, витрачала б радіус на подолання власної
+   * висоти. Вирівняні — витрачають його на горизонталь.
    */
-  function flashCombo(id: string) {
-    const icon = COMBO_ICONS[id];
-    if (!icon) return;
-    const g = new Graphics();
-    const u = 1.1;
-    const x = towerX - u / 2, y = towerY - (band.y1 - band.y0) / 2 - u;
-    for (const s of icon) {
-      penStroke(g, s.map(([sx, sy]): Vec2 => [x + sx * u, y + sy * u]), {
-        color: look.pens.marker, width: 0.1, alpha: 0.95,
-        jitter: 0.03, step: 0.2, overshoot: 0.04, halo: 0.3,
-      });
+  const floorH = () => rowHeight(band);
+  const floorY = (f: number) => rowY(band, f);
+
+  /** Півширина вежі — зона, що належить їй, а не полю. */
+  const towerReach = () => keepData.shell.roomW / 2 + 0.4;
+
+  /**
+   * Контур усієї вежі в 0..1 спільної коробки.
+   *
+   * Кімната малюється однією й тією ж трійкою штрихів, повтореною по числу
+   * поверхів; стелі в кімнати немає навмисно — стеля це підлога кімнати над
+   * нею, і другий раз намальована лінія дала б подвоєний штрих на кожному
+   * стику.
+   */
+  function shellGeometry() {
+    const sh = keepData.shell;
+    const W = sh.roomW;
+    const top = band.y0 - sh.roofH;
+    const H = sh.roofH + (band.y1 - band.y0) + sh.baseH;
+    const x0 = towerX - W / 2;
+    const fh = floorH();
+
+    const out: Vec2[][] = [];
+    const put = (strokes: Vec2[][], ry: number, rh: number) => {
+      for (const s of strokes) {
+        out.push(s.map(([px, py]): Vec2 => [px, (ry + py * rh - top) / H]));
+      }
+    };
+
+    const roof = keep.branch === 'fort' ? sh.roofFort
+      : keep.branch === 'arsenal' ? sh.roofArsenal
+        : sh.roofPlain;
+
+    put(roof, top, sh.roofH);
+    for (let i = 0; i < keep.floorCount; i++) {
+      put(sh.room, band.y0 + fh * i, fh);
+      // Закрита кімната стоїть забита дошками. Так рівень вежі має що показати:
+      // вежа не росте вгору — вона розкривається, і видно, скільки ще лишилось.
+      if (!keep.isOpen(i)) put(sh.locked, band.y0 + fh * i, fh);
     }
-    fxLayer.addChild(g);
-    fx.push({
-      t: 0,
-      step(dt) {
-        this.t += dt;
-        const p = this.t / 1.6;
-        // Спершу стоїть, тане лише в останню третину: інакше не встигнути прочитати.
-        g.alpha = p < 0.66 ? 1 : Math.max(0, (1 - p) / 0.34);
-        g.position.y = -0.5 * p;
-        if (p < 1) return false;
-        g.destroy();
-        return true;
+    put(sh.base, band.y1, sh.baseH);
+
+    return { outline: out, size: [W, H] as Vec2, x: x0 + W / 2, y: top + H / 2 };
+  }
+
+  /**
+   * Риг з обведених штрихів — і для захисника, і для союзника, і для самої вежі.
+   *
+   * `bakeTrace` пече штрихи в маску тим самим кодом, що каталог деталей, тому
+   * намальоване рукою й намальоване грою виходять однією рукою. Далі це
+   * звичайний риг з одної частини: дихання, замах і хіт-реакція дістаються
+   * задарма, без жодного окремого «рендеру юнітів».
+   */
+  function unitRig(size: Vec2, pen: string | undefined, outline: Vec2[][], mods: Mod[]) {
+    const tex = bakeTrace(renderer, outline, size, look);
+    const def: RigDef = {
+      hitbox: size,
+      anchors: {
+        hit: [0, -size[1] * 0.5],
+        // Постріл вилітає з фігури, а не з-під ніг: у лучника це висота рук.
+        muzzle: [size[0] * 0.45, -size[1] * 0.45],
+        ground: [0, size[1] / 2],
       },
-    });
+      // Піво́т знизу, а зсув на півросту вгору: фігура сідає центром на свою
+      // лінію, тому сортування за y лишається чесним.
+      parts: [{ part: 'unit', pos: [0, size[1] / 2], pivot: [0.5, 1], pen: pen ?? 'blue', mods }],
+    };
+    return { rig: buildRig(def, new Map([['unit', tex]]), { unit: { size } }, look), tex };
   }
 
-  /**
-   * Нові комбо в складі — кожне блимає раз.
-   *
-   * Погасле забуваємо: рівень може збити деталь, на якій комбо трималось, і
-   * тоді зібране заново мусить блимнути знову.
-   */
-  function flashNewCombos(stats: Stats) {
-    const now = new Set(stats.combos);
-    for (const id of shownCombos) if (!now.has(id)) shownCombos.delete(id);
-    for (const id of stats.combos) {
-      if (shownCombos.has(id)) continue;
-      shownCombos.add(id);
-      flashCombo(id);
-    }
+  // --- корпус ----------------------------------------------------------------
+  let shell: { rig: Rig; tex: Texture };
+
+  function buildShell() {
+    const g = shellGeometry();
+    const art = unitRig(g.size, 'blue', g.outline, [
+      // Корпус дихає ледь помітно: він кам'яний, а не живий.
+      { type: 'sway', amp: 0.5, freq: 0.19 },
+    ]);
+    // Корпус НЕ масштабується spriteScale: кімнати мусять лягати на смугу
+    // рядів рівно, інакше поверх з'їде відносно ряду, у який стріляє.
+    art.rig.view.position.set(g.x, g.y + g.size[1] / 2);
+    art.rig.setScale(1);
+    units.addChild(art.rig.view);
+    fixed.push(art.rig);
+    return art;
   }
 
-  /** Заряди щита (гілка Форту). Повні на кожній перерві між хвилями. */
-  let shield = 0;
-
-  /**
-   * Один ствол у бою: завести, перенастроїти або зняти.
-   *
-   * `combat.retune` при `def === null` тихо нічого не робить — і це не дрібниця
-   * саме тут: рівень може збити деталь, на якій трималась уся зброя, і вежа
-   * стріляла б далі старою гарматою. Тому «немає гармати» тут означає знятий
-   * запис, а не проігнорований виклик.
-   *
-   * @param cdOffset частка періоду, на яку зсунути перший постріл
-   */
-  function setGun(id: number, gun: ReturnType<typeof gunOf>, cdOffset = 0) {
-    if (!gun) { combat.remove(id); return; }
-    if (combat.towers.has(id)) { combat.retune(id, gun, towerRig); return; }
-    combat.add(id, gun, towerRig, towerX, towerY);
-    const t = combat.towers.get(id);
-    if (t && cdOffset) t.cd = cdOffset / gun.rate;
+  function dropShell() {
+    if (!shell) return;
+    const i = fixed.indexOf(shell.rig);
+    if (i >= 0) fixed.splice(i, 1);
+    shell.rig.view.destroy({ children: true });
+    // Текстура корпусу своя на кожну перебудову — bakeTrace щоразу віддає новий
+    // рендер-таргет, і не зняти його означає лишати його в пам'яті на кожен рівень.
+    shell.tex.destroy(true);
   }
 
-  /**
-   * Завести вежу в бій — при старті й після кожної зміни складу чи рівня.
-   *
-   * Гілка Арсеналу заводить ДВА записи: `combat` уже тримає скільки завгодно
-   * стрільців, тому другий ствол — це запис, а не рядок у combat.ts. Шкода
-   * кожного менша за повну, а відкат другого зсунутий на півперіод: вежа б'є
-   * частіше й дрібніше — розмін проти одного важкого пострілу.
-   */
-  function retuneTower() {
-    const stats = tower.stats();
-    const guns = perk().guns ?? 1;
-    const gun = gunOf(stats, balance.projectiles);
-    const split = gun && guns > 1 ? { ...gun, damage: gun.damage * 0.6 } : gun;
-    setGun(TOWER_ID, split);
-    setGun(TOWER_ID2, guns > 1 ? split : null, 0.5);
-    return stats;
-  }
-  // Комбо шаблону вважаємо вже показаними: спалах на буті нічого не означає, а
-  // на першій же деталі блимнув би тим, що стояло від початку.
-  for (const id of retuneTower().combos) shownCombos.add(id);
+  shell = buildShell();
 
-  /**
-   * Домалювати деталь до вежі — це і є апгрейд.
-   *
-   * Риг перезбирається цілком: склад міняє не картинку, а дерево частин, тож
-   * латати наявний вийшло б дорожче й крихкіше. Відкат стрільби при цьому не
-   * скидається (див. combat.retune) — інакше апгрейд посеред хвилі дарував би
-   * позачерговий постріл.
-   */
-  function addPart(
-    partId: string,
-    at: { node: number; name: string } | null,
-    quality = 1,
-  ): AddPartResult {
-    const res = tower.add(partId, at, quality);
-    if (!res.ok) return res;
+  // --- захисники в поверхах --------------------------------------------------
+  /** Малюнок захисника за номером поверху: риг і його ВЛАСНА текстура. */
+  const floorArt = new Map<number, { rig: Rig; tex: Texture }>();
 
-    // Платимо після того, як склад прийняв деталь: інакше відмова «зайнято»
-    // з'їдала б чорнило. Не вистачило — знімаємо назад, слідів не лишається.
-    const price = towerParts.parts[partId]?.cost ?? 0;
-    if (!wallet.pay(price)) {
-      tower.remove(res.id);
-      return { ok: false, reason: 'мало чорнила' };
-    }
+  /** Захисники в combat беруть від'ємні id: нуль за вежею, додатні за загоном. */
+  const defCombatId = (d: Defender) => -1 - d.id;
 
-    unplace(towerRig);
-    towerRig = placeBuild(tower, towerX, towerY);
-    const stats = retuneTower();
-    flashNewCombos(stats);
-    return { ok: true, id: res.id, spent: price, stats };
+  function mountDefender(d: Defender, art: { rig: Rig; tex: Texture }) {
+    const y = floorY(d.floor);
+    art.rig.view.position.set(towerX, y);
+    art.rig.setScale(1); // разом із корпусом: поверх мусить лягти на свою лінію
+    units.addChild(art.rig.view);
+    fixed.push(art.rig);
+    combat.add(defCombatId(d), d.gun, art.rig, towerX, y);
   }
 
+  function dropDefenderArt(floor: number) {
+    const art = floorArt.get(floor);
+    if (!art) return;
+    const i = fixed.indexOf(art.rig);
+    if (i >= 0) fixed.splice(i, 1);
+    art.rig.view.destroy({ children: true });
+    art.tex.destroy(true);
+    floorArt.delete(floor);
+  }
+
+  /** Власна слабка гармата вежі — щоб на старті гра не стояла. */
+  function retuneKeepGun(first: boolean) {
+    if (first) combat.add(TOWER_ID, keep.gun, shell.rig, towerX, towerY);
+    else combat.retune(TOWER_ID, keep.gun, shell.rig);
+  }
+  retuneKeepGun(true);
+
   /**
-   * Дорости рівень вежі — це друга вісь росту, замість переобведення деталі.
+   * Поставити захисника в поверх.
    *
-   * Ціна перевіряється НАПЕРЕД, а не як в addPart: `promote` знімає деталі,
-   * чиїх кріплень новий силует не має, і відкотити це назад уже нічим. Тому
-   * спершу гроші, потім склад.
+   * Заводиться в combat тим самим викликом, що вежа й ренжовий союзник — тому
+   * сплеш і вибір цілі працюють для нього безплатно.
+   *
+   * @param outline штрихи з рамки обведення; без них береться контур із даних,
+   *   тому виклик із консолі теж працює й дає ідеальний силует
    */
-  function levelUp(partId: string, quality = 1): LevelUpResult {
-    const root = tower.nodes[0];
-    if (!root) return { ok: false, reason: 'вежі немає' };
-    const price = towerParts.parts[partId]?.cost ?? 0;
+  function placeDefender(
+    floor: number, kind: DefKind, quality = 1,
+    outline?: Vec2[][],
+  ): PlaceResult {
+    const def = keepData.defenders[kind];
+    if (!def) return { ok: false, reason: 'немає такого захисника' };
+    const price = keep.placeCost(kind);
+    // Питаємо ДО того, як склад прийняв: поверх зайнятий або чорнила бракує —
+    // однаково відмова, і краще одна перевірка, ніж відкат.
     if (wallet.ink < price) return { ok: false, reason: 'мало чорнила' };
 
-    const res = tower.promote(root.id, partId);
-    if (!res.ok) return res;
+    const d = keep.place(floor, kind, quality);
+    if (!d) return { ok: false, reason: 'поверх зайнятий' };
     wallet.pay(price);
-    // Якість обведення нового силуету стає якістю основи: гравець щойно провів
-    // її рукою, і саме вона множить stats.range рівня (див. towerTiers._stats).
-    // Без цього рядка старанно обведена вежа не відрізнялась би від недбалої.
-    root.quality = quality;
 
-    // За збите новим силуетом повертаємо чорнило: деталь зникла не з волі
-    // гравця, і брати за це гроші означало б карати за апгрейд. Половина, як у
-    // ластика — wallet.refund() тут не годиться, він ходить по таблиці цін
-    // інструментів, а ціна деталі живе в каталозі.
-    let refunded = 0;
-    for (const d of res.dropped) refunded += wallet.earn(Math.floor((d.part.cost ?? 0) * 0.5));
+    const art = unitRig(def.size, def.pen, outline ?? def.outline, [
+      { type: 'squash', amp: 0.05, freq: 1.1 },
+      { type: 'bob', amp: 0.03, freq: 1.1 },
+      { type: 'swing', amp: 9 },
+    ]);
+    floorArt.set(floor, art);
+    mountDefender(d, art);
+    return { ok: true, floor, spent: price, defender: d };
+  }
 
-    unplace(towerRig);
-    towerRig = placeBuild(tower, towerX, towerY);
-    const stats = retuneTower();
-    // Теги нового рівня можуть самі ввімкнути комбо — гілка тим і грає в білд.
-    flashNewCombos(stats);
-    // Щит наливається одразу: інакше гравець заплатив за Форт і до кінця хвилі
-    // не бачив, за що.
-    shield = perk().shield ?? 0;
-    return { ok: true, partId, spent: price, refunded, stats };
+  /** Підняти рівень захисника. Головна витрата чорнила. */
+  function levelDefender(floor: number): LevelResult {
+    const p = keep.preview(floor);
+    if (!p) return { ok: false, reason: 'нема кого підсилювати' };
+    if (wallet.ink < p.cost) return { ok: false, reason: 'мало чорнила' };
+
+    const d = keep.levelUp(floor);
+    if (!d) return { ok: false, reason: 'нема кого підсилювати' };
+    wallet.pay(p.cost);
+    // Малюнок той самий — рука двічі не працює. Міняються тільки числа.
+    combat.retune(defCombatId(d), d.gun, floorArt.get(floor)?.rig ?? shell.rig);
+    return { ok: true, floor, spent: p.cost, defender: d };
+  }
+
+  /**
+   * Пересадити всіх захисників після зміни числа поверхів.
+   *
+   * Поверхи ділять смугу порівну, тому щойно їх стало більше — кожен поверх
+   * поїхав, а разом із ним і той, хто в ньому сидить. `combat.retune` позицію
+   * НЕ оновлює, тому запис знімається й заводиться заново.
+   */
+  function reseatDefenders() {
+    for (const d of keep.floors) {
+      if (!d) continue;
+      const art = floorArt.get(d.floor);
+      if (!art) continue;
+      combat.remove(defCombatId(d));
+      const y = floorY(d.floor);
+      art.rig.view.position.set(towerX, y);
+      combat.add(defCombatId(d), d.gun, art.rig, towerX, y);
+    }
+  }
+
+  function rebuildShell() {
+    dropShell();
+    shell = buildShell();
+    retuneKeepGun(false);
+    reseatDefenders();
+  }
+
+  /** Рівень вежі: +поверх, +життя, трохи сильніша власна гармата. */
+  function growKeep(): GrowResult {
+    if (!keep.canGrow()) return { ok: false, reason: 'вище нікуди' };
+    const price = keep.growCost();
+    if (wallet.ink < price) return { ok: false, reason: 'мало чорнила' };
+    const lives0 = keep.bonusLives;
+    if (!keep.grow()) return { ok: false, reason: 'вище нікуди' };
+    wallet.pay(price);
+    // Життя дає рівень, тому стеля росте разом із поточним: інакше апгрейд
+    // лише піднімав би максимум, не рятуючи в цій партії.
+    const got = keep.bonusLives - lives0;
+    state.maxLives += got;
+    state.lives += got;
+    rebuildShell();
+    return { ok: true, level: keep.level, spent: price };
+  }
+
+  /** Розвилка гілки — один раз на партію. */
+  function pickBranch(id: string): GrowResult {
+    if (!keep.canBranch()) return { ok: false, reason: 'ще не час' };
+    const price = keep.branchCost();
+    if (wallet.ink < price) return { ok: false, reason: 'мало чорнила' };
+    if (!keep.pickBranch(id)) return { ok: false, reason: 'немає такої гілки' };
+    wallet.pay(price);
+    rebuildShell();
+    return { ok: true, level: keep.level, spent: price };
   }
 
   // --- загін -----------------------------------------------------------------
@@ -461,41 +517,15 @@ export function createLaneGame({
     combat.remove(allyCombatId(a));
   }
 
-  /**
-   * Риг союзника з обведених штрихів.
-   *
-   * Гравець бачить у бою рівно те, що провів рукою: `bakeTrace` пече штрихи в
-   * маску тим самим кодом, що каталог деталей вежі. Далі це звичайний риг з
-   * одної частини — тому дихання, замах і хіт-реакція дістаються задарма, без
-   * жодного окремого «спрайт-союзника» в рендері.
-   */
-  function traceRig(kind: AllyKind, outline: Vec2[][]) {
-    const size = allies[kind].size;
-    const tex = bakeTrace(renderer, outline, size, look);
-    const def: RigDef = {
-      hitbox: size,
-      anchors: {
-        hit: [0, -size[1] * 0.5],
-        // Постріл вилітає з фігури, а не з-під ніг: у лучника це висота рук.
-        muzzle: [size[0] * 0.45, -size[1] * 0.45],
-        ground: [0, size[1] / 2],
-      },
-      parts: [{
-        part: 'trace',
-        // Піво́т знизу, а зсув на півросту вгору: фігура сідає центром на лінію
-        // ряду, як і ворог, тому сортування за y лишається чесним.
-        pos: [0, size[1] / 2], pivot: [0.5, 1], pen: allies[kind].pen,
-        mods: [
-          { type: 'squash', amp: 0.05, freq: 1.1 },
-          { type: 'bob', amp: 0.04, freq: 1.1 },
-          { type: 'swing', amp: 9 },
-        ],
-      }],
-    };
-    // Один запис у мапі текстур і один розмір — саме те, чого чекає buildRig.
-    const rig = buildRig(def, new Map([['trace', tex]]), { trace: { size } }, look);
-    return { rig, tex };
-  }
+  /** Риг союзника — той самий `unitRig`, що збирає захисника вежі й сам корпус.
+   *  Одна функція на все намальоване: інакше три копії одного випікання
+   *  розійшлися б виглядом. */
+  const traceRig = (kind: AllyKind, outline: Vec2[][]) =>
+    unitRig(allies[kind].size, allies[kind].pen, outline, [
+      { type: 'squash', amp: 0.05, freq: 1.1 },
+      { type: 'bob', amp: 0.04, freq: 1.1 },
+      { type: 'swing', amp: 9 },
+    ]);
 
   /**
    * Намалювати союзника в ряд.
@@ -576,11 +606,10 @@ export function createLaneGame({
   function advance(e: LaneEnemy, step: number) {
     e.x -= step;
     if (e.x > towerX) return;
-    towerRig.fire('hit');
+    shell.rig.fire('hit');
     // Щит гілки Форту тримає удар замість життя. Заряд витрачається, ворог
     // зникає, лічильник протікань не рухається — протікання тут не було.
-    if (shield > 0) {
-      shield--;
+    if (keep.spendShield()) {
       despawn(e);
       return;
     }
@@ -621,7 +650,7 @@ export function createLaneGame({
     state.phase = 'break';
     state.breakLeft = level.waveBreak ?? 5;
     // Щит наливається між хвилями, а не в бою: інакше Форт тримав би нескінченно.
-    shield = perk().shield ?? 0;
+    keep.refillShield();
   }
 
   function update(dtMs: number) {
@@ -656,21 +685,23 @@ export function createLaneGame({
   }
 
   function rescale(s: number) {
+    // Корпус вежі й ті, хто в поверхах, лишаються один-до-одного: їхні
+    // координати зав'язані на смугу рядів, а не на читаність фігури.
     for (const r of rigs) r.setScale(s);
   }
 
   drawLanes();
 
   return {
-    state, wallet, enemies, combat, band, tower, towerX, towerY,
-    spawnEnemy, damage, addPart, levelUp, squad, addAlly, update, rescale,
-    get shield() { return shield; },
-    // Півклітинка запасу — щоб палець не мусив влучати рівно в контур. Але не
-    // далі за передню колонку загону: у неї теж мусить бути куди тикнути, а на
-    // вузькому екрані spriteScale доходить до 1.8, і зона вежі накрила б її.
+    state, wallet, enemies, combat, band, keep, towerX, towerY,
+    spawnEnemy, damage, squad, addAlly, update, rescale,
+    floorY, floorH,
+    placeDefender, levelDefender, growKeep, pickBranch,
+    // Зона вежі не залежить від рівня: корпус однакової ширини на всіх
+    // поверхах. Але й не далі за передню колонку загону — у неї теж мусить
+    // бути куди тикнути.
     get towerReach() {
-      const own = Math.max(1.5, tower.metrics().width * layout.spriteScale / 2 + 0.5);
-      return Math.min(own, level.squad.xLeft - towerX - 0.3);
+      return Math.min(towerReach(), level.squad.xLeft - towerX - 0.3);
     },
     resize: drawLanes,
   };

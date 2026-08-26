@@ -191,7 +191,7 @@ export function createLaneHud({ hud, look, balance, allies, game, onRestart }: L
       tally(live, ls.x + ls.w * 0.14, ls.y, u, game.state.maxLives, game.state.lives, look);
       // Щит гілки Форту — дужки перед рисочками життів. Без цього перк невидимий:
       // гравець платить за рівень і не бачить, за що саме.
-      for (let i = 0; i < game.shield; i++) {
+      for (let i = 0; i < game.keep.shield; i++) {
         const sx = ls.x + ls.w * 0.14 + u * (0.72 + i * 0.16);
         penStroke(live, [[sx, ls.y + u * 0.22], [sx + u * 0.1, ls.y + u * 0.5], [sx, ls.y + u * 0.78]], {
           color: look.pens.blue, width: u * 0.05, alpha: 0.8,
@@ -225,7 +225,7 @@ export function createLaneHud({ hud, look, balance, allies, game, onRestart }: L
 
     shown = {
       ink, lives: game.state.lives, tool,
-      phase: game.state.phase, wave: game.state.wave, shield: game.shield,
+      phase: game.state.phase, wave: game.state.wave, shield: game.keep.shield,
     };
   }
 
@@ -292,7 +292,7 @@ export function createLaneHud({ hud, look, balance, allies, game, onRestart }: L
       const st = game.state;
       if (shown.ink === game.wallet.ink && shown.lives === st.lives && shown.tool === tool
         && shown.phase === st.phase && shown.wave === st.wave
-        && shown.shield === game.shield) return;
+        && shown.shield === game.keep.shield) return;
       const phaseChanged = shown.phase !== st.phase;
       drawLive();
       if (phaseChanged) drawEnd();

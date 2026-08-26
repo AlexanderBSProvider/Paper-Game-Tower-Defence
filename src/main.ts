@@ -24,8 +24,9 @@ import { createTowerPanel } from './controller/towerPanel.js';
 import { createLaneHud } from './controller/laneHud.js';
 import { createSquadPanel } from './controller/squadPanel.js';
 import type { Allies, LaneLevel } from './model/lane.js';
+import type { KeepData } from './model/keep.js';
 import type {
-  Balance, Layout, Level, Look, Parts, RigDefs, TowerParts, TowerTiers,
+  Balance, Layout, Level, Look, Parts, RigDefs, TowerParts,
 } from './types.js';
 
 // Два режими в одній збірці. `?mode=lane` — коридор з однією вежею, усе інше —
@@ -47,29 +48,13 @@ const [look, parts, rigDefs, level, balance, towerParts] = await Promise.all([
 
 // Дані режиму тягнемо лише коли він увімкнений: лабіринту вони не потрібні,
 // і платити за них зайвими запитами він не мусить.
-const [laneLevel, laneAllies, laneTiers] = lane
+const [laneLevel, laneAllies, laneKeep] = lane
   ? await Promise.all([
       fetch('./data/laneLevel.json').then((r) => r.json()),
       fetch('./data/allies.json').then((r) => r.json()),
-      fetch('./data/towerTiers.json').then((r) => r.json()),
-    ]) as [LaneLevel, Allies, TowerTiers]
+      fetch('./data/keep.json').then((r) => r.json()),
+    ]) as [LaneLevel, Allies, KeepData]
   : [null, null, null];
-
-/**
- * Каталог із рівнями вежі — окрема копія, не мутація спільного.
- *
- * Рівень вежі це деталь-основа, тому рівні мусять лежати в каталозі поруч із
- * деталями. Але каталог лабіринту не має побачити ні одного нового ключа:
- * дописати в towerParts.parts означало б, що майстерня лабіринту раптом знає
- * про Форт. Тому lane працює зі своєю копією об'єкта.
- */
-const laneParts: TowerParts | null = lane
-  ? {
-      ...towerParts,
-      parts: { ...towerParts.parts, ...laneTiers!.tiers },
-      templates: { ...towerParts.templates, lane: laneTiers!.template },
-    }
-  : null;
 
 const sdk = createSdk();
 await sdk.init();
@@ -105,9 +90,7 @@ const pad = inkContainer();                 // чорнило рамки обв�
 app.stage.addChild(paper.base, world, paper.overlay, hud, padSheet, pad, boil.sprite);
 
 const textures = bakeParts(app.renderer, parts, look);
-// Маски рівнів печуться тим самим кодом, що деталі — інакше домальований
-// поверх силует виглядав би іншою рукою.
-const partTex = bakeCatalogue(app.renderer, (laneParts ?? towerParts).parts, look);
+const partTex = bakeCatalogue(app.renderer, towerParts.parts, look);
 
 const debug = new URLSearchParams(location.search).has('debug');
 
@@ -136,11 +119,11 @@ resizers.push((L) => tracePad.resize(L));
 if (lane) {
   const laneGame = createLaneGame({
     world, renderer: app.renderer, look, level: laneLevel!, allies: laneAllies!, balance,
-    rigDefs, parts, textures, layout, towerParts: laneParts!, partTex,
+    rigDefs, parts, textures, layout, keepData: laneKeep!,
   });
   const towerPanel = createTowerPanel({
     canvas: app.canvas, app, hudLayer: hud, worldLayer: world,
-    look, layout, game: laneGame, towerParts: laneParts!, tracePad,
+    look, layout, game: laneGame, keepData: laneKeep!, tracePad,
   });
   // ponytail: рестарт через перезавантаження — те саме рішення, що в лабіринті.
   const laneHud = createLaneHud({
