@@ -1,26 +1,24 @@
-// Нотатки на полях режиму lane: чорнило, два силуети союзників, життя, хвиля.
+// Нотатки на полях режиму lane: ручка з чорнилом, життя, хвиля, і записка
+// про нову зброю.
 //
 // Дублює (не імпортує) дрібні хелпери з hud.ts — `penIcon`, `tally`, `drawEnd`,
 // дірті-чек у tick(). Це навмисно: 50 рядків копії дешевші за спільний модуль
 // заради одного другого споживача, а головне — hud.ts лишається недоторканим,
 // як обіцяно в плані.
 //
-// Різниць із hud.ts дві, і обидві від розкладки коридору:
-//   1. Смуга йде ЗВЕРХУ, а не знизу: низ ядра віддано полиці деталей вежі
-//      (towerPanel#shelfBand), і сидіти там удвох нема як.
-//   2. Іконок інструментів не малюємо — беремо контури з allies.json. Той самий
-//      outline, який гравець потім обводитиме в рамці, тож іконка не може
-//      розійтися з тим, що вийде на полі.
+// Іконок зброї на полях НЕМАЄ (рішення власника): зброю обирають у рамці
+// обведення, після того як обрано ряд. У бою гравець дивиться на поле, а не
+// на смугу карток.
 //
-// Каталогу турелей у смузі немає: вежа апгрейдиться тапом по самій вежі
-// (towerPanel), і кнопка на полях була б другим входом у ті самі двері.
+// Смуга йде ЗВЕРХУ: у коридорі ядро ширше за високе, і вільне місце — над
+// полем. У ландскейпі смуга лишається збоку, як у лабіринті.
 
 import { Container, Graphics } from '../../lib/pixi.min.mjs';
 import { penStroke, penPath, penRect, penText, textWidth, hatch, scribble } from '../view/ink.js';
 import type { PenOpts } from '../view/ink.js';
 import type { LaneGame, Phase } from '../laneGame.js';
-import type { Allies } from '../model/lane.js';
-import type { AllyKind } from '../model/squad.js';
+import type { WeaponsData } from '../model/weapons.js';
+import type { BuildingsData } from '../model/buildings.js';
 import type { Balance, Layout, Look, Vec2 } from '../types.js';
 
 /** Місце під іконку в смузі полів. `gauge` є лише в ручки. */
@@ -36,23 +34,22 @@ export interface LaneHudOpts {
   hud: Container;
   look: Look;
   balance: Balance;
-  allies: Allies;
+  weapons: WeaponsData;
+  buildings: BuildingsData;
   game: LaneGame;
   onRestart?: () => void;
 }
 
 export interface LaneHud {
   resize(L: Layout): void;
-  tick(): void;
-  /** Кого малюватимемо наступним тапом по ряду. */
-  readonly tool: AllyKind;
-  setTool(t: AllyKind): void;
-  /** @returns що під пальцем: тип союзника, 'restart' або нічого */
+  tick(dt: number): void;
+  /** Центр колби ручки в екранних px — сюди летять краплі чорнила. */
+  gaugeAt(): Vec2;
+  /** @returns 'restart', якщо тап забрала фінальна записка, інакше нічого */
   hit(px: number, py: number): string | null;
 }
 
-const SLOTS = ['ink', 'melee', 'ranged', 'lives'];
-const TOOLS = new Set<string>(['melee', 'ranged']);
+const SLOTS = ['ink', 'lives'];
 
 /** Ручка збоку: корпус, конус і носик. Усередині корпусу видно чорнило. */
 function penIcon(g: Graphics, x: number, y: number, u: number, pen: PenOpts) {
@@ -90,38 +87,35 @@ function tally(
   }
 }
 
-export function createLaneHud({ hud, look, balance, allies, game, onRestart }: LaneHudOpts): LaneHud {
+export function createLaneHud({ hud, look, balance, weapons, buildings, game, onRestart }: LaneHudOpts): LaneHud {
   const still = new Graphics();
   const live = new Graphics();
-  const over = new Graphics(); // фінальна записка поверх усього
-  hud.addChild(still, live, over);
+  const toast = new Graphics(); // записка «нова зброя»
+  const over = new Graphics();  // фінальна записка поверх усього
+  hud.addChild(still, live, toast, over);
 
   const slots = new Map<string, Slot>();
   let u = 24;
-  let tool: AllyKind = 'melee';
   /** останнє намальоване — щоб не перемальовувати щокадру */
-  let shown: {
-    ink: number; lives: number; tool: string; phase: Phase; wave: number; shield: number;
-  } | null = null;
+  let shown: { ink: number; lives: number; phase: Phase; wave: number; slots: boolean; plots: boolean } | null = null;
   let waveAt: { x: number; y: number } | null = null;
   // `!` — інваріант: place() ставить L0 і його кличе resize(), яку main кличе
   // на старті. Усе, що читає L0, працює лише після цього.
   let L0!: Layout;
   let box: { x: number; y: number; w: number; h: number } | null = null;
 
-  /** Іконка союзника — його ж контур із allies.json, вписаний у коробку u×u. */
-  function allyIcon(g: Graphics, id: string, x: number, y: number, size: number, pen: PenOpts) {
-    for (const s of allies[id as AllyKind].outline) {
-      penStroke(g, s.map(([sx, sy]): Vec2 => [x + sx * size, y + sy * size]), {
-        ...pen, jitter: size * 0.012, step: size * 0.16, overshoot: size * 0.02,
-      });
-    }
-  }
+  /** Черга записок про нову зброю чи будівлю: показуємо по одній, 2.5 с кожну. */
+  const queue: { id: string; kind: 'weapon' | 'building' }[] = [];
+  let toastLeft = 0;
+
+  const anyUsable = () => Object.entries(weapons.weapons)
+    .some(([id, w]) => !id.startsWith('_') && game.isUnlocked(id) && game.wallet.ink >= w.cost);
+  const anyBuildable = () => Object.entries(buildings.buildings)
+    .some(([id, b]) => !id.startsWith('_') && game.isBuildingUnlocked(id) && game.wallet.ink >= b.cost);
 
   function place(L: Layout) {
     L0 = L;
     const n = SLOTS.length;
-    // Смуга зверху: низ ядра належить полиці деталей вежі.
     const top = Math.max(L.oy, L.h * 0.1);
     const side = Math.max(L.ox, 0);
     const vertical = side > top;
@@ -134,33 +128,21 @@ export function createLaneHud({ hud, look, balance, allies, game, onRestart }: L
       SLOTS.forEach((id, i) => slots.set(id, { x, y: y0 + i * bh, w: bw, h: bh }));
       waveAt = { x: L.w - side / 2, y: L.h * 0.12 };
     } else {
-      u = Math.min(64, top / 1.62, L.w / (1.25 * n));
+      u = Math.min(64, top / 1.62, L.w / (1.25 * 4));
       const bw = 1.2 * u, bh = 1.6 * u;
-      const x0 = (L.w - n * bw) / 2;
+      // Ручка ліворуч, життя праворуч: між ними місце для записки про зброю.
       const y = (top - bh) / 2;
-      SLOTS.forEach((id, i) => slots.set(id, { x: x0 + i * bw, y, w: bw, h: bh }));
-      // У кут смуги, а не по центру: центр зайнятий самим рядом іконок.
-      waveAt = { x: L.w - u, y: top - u * 0.4 };
+      slots.set('ink', { x: L.w * 0.08, y, w: bw, h: bh });
+      slots.set('lives', { x: L.w * 0.92 - bw, y, w: bw, h: bh });
+      waveAt = { x: L.w / 2, y: top - u * 0.4 };
     }
   }
 
   function drawStill() {
     still.clear();
     const pen: PenOpts = { color: look.pens.blue, width: u * 0.045, alpha: 0.85, jitter: u * 0.018, step: u * 0.22, overshoot: u * 0.05, halo: 0.12 };
-
-    for (const id of SLOTS) {
-      const s = slots.get(id);
-      if (!s) continue;
-      const ix = s.x + (s.w - u) / 2;
-      if (id === 'ink') s.gauge = penIcon(still, ix, s.y, u, pen);
-      else if (TOOLS.has(id)) allyIcon(still, id, ix + u * 0.1, s.y, u * 0.8, pen);
-
-      if (id === 'lives' || id === 'ink') continue;
-      const size = u * 0.4;
-      const txt = String(allies[id as AllyKind].cost);
-      penText(still, txt, s.x + (s.w - textWidth(txt, size)) / 2, s.y + u, size,
-        { color: look.pens.blue, alpha: 0.8 });
-    }
+    const s = slots.get('ink');
+    if (s) s.gauge = penIcon(still, s.x + (s.w - u) / 2, s.y, u, pen);
   }
 
   function drawLive() {
@@ -187,34 +169,7 @@ export function createLaneHud({ hud, look, balance, allies, game, onRestart }: L
     }
 
     const ls = slots.get('lives');
-    if (ls) {
-      tally(live, ls.x + ls.w * 0.14, ls.y, u, game.state.maxLives, game.state.lives, look);
-      // Щит гілки Форту — дужки перед рисочками життів. Без цього перк невидимий:
-      // гравець платить за рівень і не бачить, за що саме.
-      for (let i = 0; i < game.keep.shield; i++) {
-        const sx = ls.x + ls.w * 0.14 + u * (0.72 + i * 0.16);
-        penStroke(live, [[sx, ls.y + u * 0.22], [sx + u * 0.1, ls.y + u * 0.5], [sx, ls.y + u * 0.78]], {
-          color: look.pens.blue, width: u * 0.05, alpha: 0.8,
-          jitter: u * 0.015, step: u * 0.14, overshoot: u * 0.02, halo: 0.1,
-        });
-      }
-    }
-
-    // Не по кишені — ціна закреслюється: тап по такому силуету нічого не дасть,
-    // і краще це видно до тапу, ніж після мовчазної відмови.
-    for (const id of TOOLS) {
-      const t = slots.get(id);
-      if (!t || ink >= allies[id as AllyKind].cost) continue;
-      scribble(live, t.x + t.w * 0.1, t.y + u * 0.15, t.w * 0.8, u * 0.9,
-        { color: look.pens.pencil, alpha: 0.45, passes: 1, halo: 0 });
-    }
-
-    // Обраний силует підкреслено маркером.
-    const t = slots.get(tool);
-    if (t) {
-      live.rect(t.x + t.w * 0.08, t.y + u * 1.46, t.w * 0.84, u * 0.11)
-        .fill({ color: look.pens.marker, alpha: 0.6 });
-    }
+    if (ls) tally(live, ls.x + ls.w * 0.14, ls.y, u, game.state.maxLives, game.state.lives, look);
 
     if (waveAt) {
       const size = u * 0.44;
@@ -223,10 +178,42 @@ export function createLaneHud({ hud, look, balance, allies, game, onRestart }: L
         { color: look.pens.pencil, alpha: 0.7 });
     }
 
-    shown = {
-      ink, lives: game.state.lives, tool,
-      phase: game.state.phase, wave: game.state.wave, shield: game.keep.shield,
-    };
+    // Слоти й фундаменти світяться, коли є що намалювати: є куди тапати.
+    const active = anyUsable(), plots = anyBuildable();
+    game.setSlotsActive(active);
+    game.setPlotsActive(plots);
+
+    shown = { ink, lives: game.state.lives, phase: game.state.phase, wave: game.state.wave, slots: active, plots };
+  }
+
+  /**
+   * Записка «відкрито нову зброю»: великий ескіз трафарету посеред поля з
+   * маркерною плямою під ним і зірочкою-спалахом. Тримається 2.5 с і тане.
+   */
+  function drawToast(u: { id: string; kind: 'weapon' | 'building' }, p: number) {
+    toast.clear();
+    const w = u.kind === 'weapon' ? weapons.weapons[u.id] : buildings.buildings[u.id];
+    if (!w) return;
+    const s = Math.min(L0.w, L0.h) * 0.22;
+    const cx = L0.w / 2, cy = L0.oy + L0.h * 0.02 + s * 0.6;
+    const a = p < 0.15 ? p / 0.15 : p > 0.8 ? (1 - p) / 0.2 : 1;
+    toast.alpha = a;
+    toast.rect(cx - s * 0.62, cy - s * 0.58, s * 1.24, s * 1.2).fill({ color: look.pens.marker, alpha: 0.5 });
+    penRect(toast, cx - s * 0.6, cy - s * 0.56, s * 1.2, s * 1.16, {
+      color: look.pens.pencil, width: s * 0.02, alpha: 0.6, jitter: s * 0.008, step: s * 0.2, overshoot: s * 0.03, halo: 0,
+    });
+    for (const st of w.outline) {
+      penStroke(toast, st.map(([x, y]): Vec2 => [cx - s * 0.5 + x * s, cy - s * 0.5 + y * s]), {
+        color: look.pens.blue, width: s * 0.05, alpha: 0.9, jitter: s * 0.01, step: s * 0.15, overshoot: s * 0.02, halo: 0.14,
+      });
+    }
+    // Промінці по кутах — «нове!».
+    for (const [dx, dy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as Vec2[]) {
+      const x0 = cx + dx * s * 0.66, y0 = cy + dy * s * 0.62;
+      penStroke(toast, [[x0, y0], [x0 + dx * s * 0.12, y0 + dy * s * 0.12]], {
+        color: look.pens.orange ?? look.pens.red, width: s * 0.035, alpha: 0.9, jitter: s * 0.006, step: s * 0.1, overshoot: 0, halo: 0.1,
+      });
+    }
   }
 
   /** Кінець партії: записка поверх аркуша. Виграв — велика галочка, програв —
@@ -283,30 +270,40 @@ export function createLaneHud({ hud, look, balance, allies, game, onRestart }: L
     box = { x: 0, y: 0, w: W, h: H }; // після кінця тап будь-де = ще раз
   }
 
+  const TOAST = 2.5;
+
   return {
     resize(L) { place(L); drawStill(); drawLive(); drawEnd(); },
 
     /** Дешева перевірка щокадру: перемальовуємо лише коли число змінилось. */
-    tick() {
+    tick(dt) {
+      queue.push(...game.takeUnlocks());
+      if (toastLeft > 0 || queue.length) {
+        if (toastLeft <= 0) toastLeft = TOAST;
+        toastLeft -= dt;
+        const id = queue[0];
+        if (toastLeft <= 0) { queue.shift(); toast.clear(); }
+        else if (id) drawToast(id, 1 - toastLeft / TOAST);
+      }
+
       if (!shown) return;
       const st = game.state;
-      if (shown.ink === game.wallet.ink && shown.lives === st.lives && shown.tool === tool
-        && shown.phase === st.phase && shown.wave === st.wave
-        && shown.shield === game.keep.shield) return;
+      if (shown.ink === game.wallet.ink && shown.lives === st.lives
+        && shown.phase === st.phase && shown.wave === st.wave && shown.slots === anyUsable()
+        && shown.plots === anyBuildable()) return;
       const phaseChanged = shown.phase !== st.phase;
       drawLive();
       if (phaseChanged) drawEnd();
     },
 
-    get tool() { return tool; },
-    setTool(t) { tool = t; },
+    gaugeAt() {
+      const b = slots.get('ink')?.gauge;
+      if (!b) return [u, u];
+      return [b.x + b.w / 2, b.y + b.h / 2];
+    },
 
-    hit(px, py) {
+    hit() {
       if (box) { onRestart?.(); return 'restart'; }
-      for (const id of TOOLS) {
-        const s = slots.get(id);
-        if (s && px >= s.x && px <= s.x + s.w && py >= s.y && py <= s.y + s.h) return id;
-      }
       return null;
     },
   };

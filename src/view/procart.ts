@@ -140,6 +140,93 @@ function decorBush(g: Graphics, w: number, h: number, lw: number) {
   penStroke(g, [[w * 0.08, h * 0.96], [w * 0.92, h * 0.94]], ink({ width: lw * 0.7, alpha: 0.6 }));
 }
 
+// --- союзники: тіла під намальовану зброю ---------------------------------
+// Зброю малює гравець, тіло — код. Дві пози, бо рід читається з пози раніше,
+// ніж око розбере зброю: мілі виставив щит уперед, ренж витягнув руку.
+// Точка руки задана в weapons.json#bodies і мусить збігатися з тим, де тут
+// закінчується рука — інакше зброя висітиме в повітрі.
+function allyBodyMelee(g: Graphics, w: number, h: number, lw: number) {
+  penCircle(g, w * 0.5, h * 0.13, h * 0.1, ink({ width: lw }));
+  penStroke(g, [[w * 0.5, h * 0.24], [w * 0.5, h * 0.62]], ink({ width: lw }));
+  penStroke(g, [[w * 0.5, h * 0.62], [w * 0.36, h * 0.98]], ink({ width: lw }));
+  penStroke(g, [[w * 0.5, h * 0.62], [w * 0.64, h * 0.98]], ink({ width: lw }));
+  // рука зі щитом — уперед, до ворога
+  penStroke(g, [[w * 0.5, h * 0.34], [w * 0.24, h * 0.46]], ink({ width: lw * 0.9 }));
+  penPath(g, [[w * 0.1, h * 0.36], [w * 0.32, h * 0.36], [w * 0.34, h * 0.56], [w * 0.21, h * 0.68], [w * 0.08, h * 0.56]], ink({ width: lw, closed: true }));
+  hatch(g, w * 0.12, h * 0.4, w * 0.18, h * 0.22, ink({ gap: h * 0.05, width: lw * 0.45, alpha: 0.45 }));
+  // рука зі зброєю: кінець — точка hand у weapons.json
+  penStroke(g, [[w * 0.5, h * 0.34], [w * 0.8, h * 0.48]], ink({ width: lw * 0.9 }));
+}
+
+function allyBodyRanged(g: Graphics, w: number, h: number, lw: number) {
+  penCircle(g, w * 0.42, h * 0.13, h * 0.1, ink({ width: lw }));
+  penStroke(g, [[w * 0.42, h * 0.24], [w * 0.42, h * 0.62]], ink({ width: lw }));
+  penStroke(g, [[w * 0.42, h * 0.62], [w * 0.28, h * 0.98]], ink({ width: lw }));
+  penStroke(g, [[w * 0.42, h * 0.62], [w * 0.56, h * 0.98]], ink({ width: lw }));
+  // сагайдак за спиною
+  penPath(g, [[w * 0.2, h * 0.3], [w * 0.3, h * 0.26], [w * 0.36, h * 0.5], [w * 0.26, h * 0.54]], ink({ width: lw * 0.8, closed: true }));
+  // задня рука тягне тятиву
+  penStroke(g, [[w * 0.42, h * 0.36], [w * 0.62, h * 0.44], [w * 0.52, h * 0.5]], ink({ width: lw * 0.9 }));
+  // передня рука витягнута: кінець — точка hand у weapons.json
+  penStroke(g, [[w * 0.42, h * 0.36], [w * 0.86, h * 0.42]], ink({ width: lw * 0.9 }));
+}
+
+function allyBodySupport(g: Graphics, w: number, h: number, lw: number) {
+  // каптур — гострий, як у ченця
+  penPath(g, [[w * 0.36, h * 0.24], [w * 0.5, h * 0.03], [w * 0.64, h * 0.24]], ink({ width: lw }));
+  penCircle(g, w * 0.5, h * 0.17, h * 0.085, ink({ width: lw * 0.9 }));
+  // ряса трапецією до землі, без ніг
+  penPath(g, [[w * 0.38, h * 0.26], [w * 0.62, h * 0.26], [w * 0.72, h * 0.97], [w * 0.28, h * 0.97]], ink({ width: lw, closed: true }));
+  hatch(g, w * 0.3, h * 0.6, w * 0.4, h * 0.34, ink({ gap: h * 0.06, width: lw * 0.45, alpha: 0.4, angle: 1.2 }));
+  // пояс
+  penStroke(g, [[w * 0.36, h * 0.54], [w * 0.64, h * 0.54]], ink({ width: lw * 0.8, alpha: 0.8 }));
+  // рука з посохом: кінець — точка hand у weapons.json
+  penStroke(g, [[w * 0.56, h * 0.36], [w * 0.78, h * 0.5]], ink({ width: lw * 0.9 }));
+}
+
+// --- бігун --------------------------------------------------------------
+// Дрібне тільце на довгих тонких ногах: швидкість читається з силуету.
+function runnerBody(g: Graphics, w: number, h: number, lw: number) {
+  penCircle(g, w * 0.5, h * 0.42, Math.min(w, h) * 0.3, ink({ width: lw }));
+  penStroke(g, [[w * 0.4, h * 0.66], [w * 0.22, h * 0.98]], ink({ width: lw }));
+  penStroke(g, [[w * 0.6, h * 0.66], [w * 0.8, h * 0.98]], ink({ width: lw }));
+  hatch(g, w * 0.34, h * 0.42, w * 0.32, h * 0.2, ink({ gap: w * 0.12, width: lw * 0.5, alpha: 0.45 }));
+}
+
+function runnerHead(g: Graphics, w: number, h: number, lw: number) {
+  const cx = w * 0.5, cy = h * 0.7, r = Math.min(w, h) * 0.26;
+  // вуха довші за голову — притиснуті назад, як у бігу
+  penPath(g, [[cx - r * 0.6, cy - r * 0.7], [cx - r * 1.6, h * 0.04], [cx - r * 0.1, cy - r * 0.95]], ink({ width: lw * 0.9 }));
+  penPath(g, [[cx + r * 0.3, cy - r * 0.8], [cx - r * 0.5, h * 0.02], [cx + r * 0.7, cy - r * 0.6]], ink({ width: lw * 0.9 }));
+  penCircle(g, cx, cy, r, ink({ width: lw }));
+  for (const s of [-1, 1]) penCircle(g, cx + s * r * 0.4, cy - r * 0.1, r * 0.18, ink({ width: lw * 0.7 }));
+  penStroke(g, [[cx - r * 0.4, cy + r * 0.5], [cx + r * 0.4, cy + r * 0.5]], ink({ width: lw * 0.8 }));
+}
+
+// --- здоровань ------------------------------------------------------------
+// Купол панцира, заштрихований наскрізь: броня видна без слів.
+function bruteBody(g: Graphics, w: number, h: number, lw: number) {
+  penPath(g, [[w * 0.08, h * 0.8], [w * 0.06, h * 0.45], [w * 0.2, h * 0.14], [w * 0.5, h * 0.04], [w * 0.8, h * 0.14], [w * 0.94, h * 0.45], [w * 0.92, h * 0.8]], ink({ width: lw * 1.15, closed: true }));
+  // пластини панцира
+  penStroke(g, [[w * 0.12, h * 0.42], [w * 0.88, h * 0.42]], ink({ width: lw * 0.8, alpha: 0.8 }));
+  penStroke(g, [[w * 0.16, h * 0.62], [w * 0.84, h * 0.62]], ink({ width: lw * 0.8, alpha: 0.8 }));
+  hatch(g, w * 0.14, h * 0.16, w * 0.72, h * 0.62, ink({ gap: w * 0.07, width: lw * 0.5, alpha: 0.5, angle: -0.5 }));
+  // короткі товсті ноги
+  penPath(g, [[w * 0.22, h * 0.8], [w * 0.2, h * 0.98], [w * 0.4, h * 0.98], [w * 0.38, h * 0.8]], ink({ width: lw }));
+  penPath(g, [[w * 0.62, h * 0.8], [w * 0.6, h * 0.98], [w * 0.8, h * 0.98], [w * 0.78, h * 0.8]], ink({ width: lw }));
+}
+
+function bruteHead(g: Graphics, w: number, h: number, lw: number) {
+  const cx = w * 0.5, cy = h * 0.6, r = Math.min(w, h) * 0.34;
+  penCircle(g, cx, cy, r, ink({ width: lw }));
+  // насуплена брова однією лінією
+  penStroke(g, [[cx - r * 0.8, cy - r * 0.35], [cx, cy - r * 0.1], [cx + r * 0.8, cy - r * 0.35]], ink({ width: lw * 1.1 }));
+  for (const s of [-1, 1]) penCircle(g, cx + s * r * 0.4, cy + r * 0.1, r * 0.14, ink({ width: lw * 0.7 }));
+  // ікла з-під нижньої губи
+  penStroke(g, [[cx - r * 0.45, cy + r * 0.55], [cx - r * 0.55, cy + r * 1.05], [cx - r * 0.3, cy + r * 0.6]], ink({ width: lw * 0.8 }));
+  penStroke(g, [[cx + r * 0.45, cy + r * 0.55], [cx + r * 0.55, cy + r * 1.05], [cx + r * 0.3, cy + r * 0.6]], ink({ width: lw * 0.8 }));
+}
+
 const DOODLES: Record<string, Doodle> = {
   earling_body: earlingBody,
   earling_head: earlingHead,
@@ -153,6 +240,13 @@ const DOODLES: Record<string, Doodle> = {
   keep_flag: keepFlag,
   decor_tree: decorTree,
   decor_bush: decorBush,
+  ally_body_melee: allyBodyMelee,
+  ally_body_ranged: allyBodyRanged,
+  ally_body_support: allyBodySupport,
+  runner_body: runnerBody,
+  runner_head: runnerHead,
+  brute_body: bruteBody,
+  brute_head: bruteHead,
 };
 
 /**

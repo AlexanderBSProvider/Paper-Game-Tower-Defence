@@ -182,6 +182,18 @@ function clipSeg(
   return [[x0 + t0 * dx, y0 + t0 * dy], [x0 + t1 * dx, y0 + t1 * dy]];
 }
 
+/** Зірочка: п'ять променів однією замкненою ломаною. Рідкість у зошиті —
+ *  це зірки на полях, бо перо літер не вміє. */
+export function penStar(g: Graphics, cx: number, cy: number, r: number, o: PenOpts = {}) {
+  const pts: Vec2[] = [];
+  for (let k = 0; k < 10; k++) {
+    const a = -Math.PI / 2 + (k / 10) * TAU;
+    const rr = k % 2 ? r * 0.45 : r;
+    pts.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]);
+  }
+  return penPath(g, pts, { closed: true, overshoot: r * 0.1, jitter: r * 0.06, step: r * 0.8, ...o });
+}
+
 /** Штрихування — єдиний спосіб «залити» area в цьому стилі. Суцільних заливок немає. */
 export function hatch(g: Graphics, x: number, y: number, w: number, h: number, o: PenOpts = {}) {
   const { angle = Math.PI * 0.28, gap = 6, jitterGap = 0.35 } = o;

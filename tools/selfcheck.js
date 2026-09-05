@@ -19,9 +19,10 @@ import { createWallet } from '../dist/model/economy.js';
 import { makeTemplate, scoreTrace, magnetize, resample, nearestOn } from '../dist/model/trace.js';
 import { createBuild, qualityMul, gunOf } from '../dist/model/build.js';
 import { chainTargets, oppositeTarget } from '../dist/model/aim.js';
-import { rowY, rowOf, rowHeight } from '../dist/model/lane.js';
-import { createSquad } from '../dist/model/squad.js';
-import { createKeep } from '../dist/model/keep.js';
+import { rowY, rowOf, rowHeight, pickWeighted } from '../dist/model/lane.js';
+import { rarityOf, counterMul, unitStats, weaponIds, unlockedAt } from '../dist/model/weapons.js';
+import { createArmy } from '../dist/model/units.js';
+import { createTown, buildingIds } from '../dist/model/buildings.js';
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
@@ -629,6 +630,7 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
   }
 }
 
+
 // --- lane mode: геометрія рядів --------------------------------------------
 {
   const band = { y0: 2, y1: 10, rows: 4 };
@@ -655,132 +657,18 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
   assert.equal(rowOf(band, 100), 3, 'нижче смуги — останній ряд');
   assert.equal(rowY(band, -5), rowY(band, 0), 'ряд за межами затискається');
   assert.equal(rowY(band, 99), rowY(band, 3));
-}
 
-// --- lane mode: загін -------------------------------------------------------
-{
-  const stats = { hp: 10, damage: 2, rate: 1, life: 10, range: 3, reach: 0.5 };
-  const mk = () => createSquad({
-    rows: 3, cols: 3, xLeft: 1, xRight: 5,
-    melee: stats, ranged: stats,
-  });
-
-  // Колонки рівномірні: тил біля вежі, передова праворуч.
-  {
-    const s = mk();
-    near(s.colX(0), 1);
-    near(s.colX(1), 3);
-    near(s.colX(2), 5);
-  }
-
-  // Мілі стає в передову, ренж — у тил. Порядок постановки не має значення:
-  // лінія збирається сама, інакше гравець мусив би думати про черговість.
-  {
-    const s = mk();
-    const a = s.add('ranged', 0, 1);
-    const b = s.add('melee', 0, 1);
-    assert.ok(a.ok && b.ok);
-    assert.equal(a.ally.col, 0, 'ренж — у тил');
-    assert.equal(b.ally.col, 2, 'мілі — на передову');
-
-    // Другий ренж займає наступну з тилу, а не будь-яку вільну.
-    const c = s.add('ranged', 0, 1);
-    assert.ok(c.ok);
-    assert.equal(c.ally.col, 1);
-  }
-
-  // Ряд повний → місце поступається НАЙСЛАБШИЙ за якістю, і саме його колонка
-  // дістається новому. Тут легко тихо взяти першого-ліпшого.
-  {
-    const s = mk();
-    s.add('melee', 0, 0.9);
-    const weak = s.add('melee', 0, 0.2);
-    s.add('melee', 0, 0.8);
-    assert.equal(s.allies.length, 3);
-
-    const r = s.add('melee', 0, 1);
-    assert.ok(r.ok);
-    assert.equal(r.replaced?.id, weak.ally.id, 'виштовхнули не найслабшого');
-    assert.equal(r.ally.col, weak.ally.col, 'новий не став на місце виштовханого');
-    assert.equal(s.allies.length, 3, 'коробка виросла понад норму');
-  }
-
-  // Ряди незалежні: повний нульовий не заважає першому.
-  {
-    const s = mk();
-    for (let i = 0; i < 3; i++) s.add('melee', 0, 1);
-    const r = s.add('melee', 1, 1);
-    assert.ok(r.ok);
-    assert.equal(r.replaced, null, 'вільний ряд не мав нікого виштовхувати');
-    assert.equal(s.allies.length, 4);
-  }
-
-  assert.equal(s2ok(mk().add('melee', 9, 1)), 'немає такого ряду');
-  assert.equal(s2ok(mk().add('melee', -1, 1)), 'немає такого ряду');
-
-  // blockerAt — те, через що ворог або йде далі, або спиняється.
-  {
-    const s = mk();
-    const front = s.add('melee', 0, 1).ally;   // col 2, x = 5
-    const back = s.add('melee', 0, 1).ally;    // col 1, x = 3
-    s.add('melee', 1, 1);                      // інший ряд — не має впливати
-    const shooter = s.add('ranged', 0, 1).ally; // col 0, x = 1
-
-    // Ворог праворуч від усіх: спиняє найправіший мілі, а не найближчий до вежі.
-    assert.equal(s.blockerAt(0, 9)?.id, front.id, 'блокує не передовий');
-    // Ворог уже проминув передового — далі його тримає наступний.
-    assert.equal(s.blockerAt(0, 4)?.id, back.id);
-    // Попереду лишився тільки ренжовий — він не блокує.
-    assert.equal(s.blockerAt(0, 2), null, 'ренжовий не має блокувати рух');
-    assert.notEqual(s.blockerAt(0, 9)?.id, shooter.id);
-    // Чужий ряд не рахується.
-    assert.equal(s.blockerAt(2, 9), null, 'блокувальник знайшовся не в тому ряду');
-  }
-
-  // Якість керує і живучістю, і тим, скільки протримається: недбалий силует
-  // згасає раніше за старанний. Це і є та ціна поспіху, на якій тримається бій.
-  {
-    const s = mk();
-    const sloppy = s.add('melee', 0, 0).ally;
-    const careful = s.add('melee', 1, 1).ally;
-    assert.ok(careful.maxLife > sloppy.maxLife, 'недбалий має в\'янути швидше');
-    assert.ok(careful.maxHp > sloppy.maxHp);
-    assert.ok(careful.damage > sloppy.damage);
-
-    // Згасання прибирає зі списку й повідомляє, кого саме — щоб хаб зняв риг.
-    const gone = s.tick(sloppy.maxLife + 0.01);
-    assert.equal(gone.length, 1);
-    assert.equal(gone[0].id, sloppy.id);
-    assert.ok(!s.allies.includes(sloppy));
-    assert.ok(s.allies.includes(careful), 'старанний згас разом із недбалим');
-  }
-
-  // Смерть від шкоди прибирає одразу, недобитий лишається.
-  {
-    const s = mk();
-    const a = s.add('melee', 0, 1).ally;
-    assert.equal(s.damage(a, 1), false);
-    assert.ok(s.allies.includes(a));
-    assert.equal(s.damage(a, 1e6), true);
-    assert.ok(!s.allies.includes(a), 'мертвий лишився в загоні');
-  }
-
-  // Ренжовий несе готовий Gun — combat.ts заводить його тим самим викликом,
-  // що й вежу. Без цього ренжові просто не стріляли б.
-  {
-    const s = mk();
-    const r = s.add('ranged', 0, 1).ally;
-    const m = s.add('melee', 0, 1).ally;
-    assert.ok(r.gun, 'ренжовий без гармати');
-    assert.ok(r.gun.damage > 0 && r.gun.range > 0);
-    assert.equal(m.gun, undefined, 'мілі не має бути гармати');
-  }
+  // Зважений вибір: нульова вага не випадає, межі відрізків належать наступному.
+  assert.equal(pickWeighted({ a: 1, b: 0 }, 0.99), 'a');
+  assert.equal(pickWeighted({ a: 1, b: 3 }, 0.1), 'a');
+  assert.equal(pickWeighted({ a: 1, b: 3 }, 0.25), 'b');
+  assert.equal(pickWeighted({ a: 1, b: 3 }, 0.999), 'b');
 }
 
 // --- лабіринт не поїхав -----------------------------------------------------
 // Сторож балансу РОБОЧОЇ гри, не режиму. Числа зняті з коду до того, як лінія
 // почала перебирати build.ts, і звірені на чотирьох складах, включно з metrics.
-// Якщо цей блок упав — поїхав лабіринт, і шукати треба не в keep.ts.
+// Якщо цей блок упав — поїхав лабіринт, і шукати треба не в режимі.
 {
   const TP = JSON.parse(readFileSync(
     fileURLToPath(new URL('../data/towerparts.json', import.meta.url)), 'utf8'));
@@ -798,395 +686,641 @@ assert.deepEqual(simplify([[0, 0], [0, 1], [0, 2], [1, 2]]), [[0, 0], [0, 2], [1
   near(s.metrics.topMass, 0.47403047091412726);
 }
 
-// --- lane mode: вежа поверхами ----------------------------------------------
-// Замінює склад деталей у цьому режимі. Найтихіше тут ламається дві речі:
-// прев'ю картки, що розійшлося з тим, що справді стається після покупки, і
-// радіус, якого не вистачає, щоб поверх дістав до дальнього ряду — бо combat
-// міряє відстань двовимірно, і вертикаль з'їдає засяг.
+// --- lane mode: зброя, рідкість, контри ------------------------------------
+// Найтихіше тут ламається три речі: пороги рідкості, що не зростають (legendary
+// стає недосяжним без жодної помилки); контри, які нічого не контрять (усі
+// зброї однакові, а картки обіцяють різницю); і зброя, що домінує голими
+// числами (тоді клас — оздоблення, а не рішення).
+const root = fileURLToPath(new URL('..', import.meta.url));
+const WP = JSON.parse(readFileSync(root + 'data/weapons.json', 'utf8'));
+const EN = JSON.parse(readFileSync(root + 'data/laneEnemies.json', 'utf8'));
+const LL = JSON.parse(readFileSync(root + 'data/laneLevel.json', 'utf8'));
+const BD = JSON.parse(readFileSync(root + 'data/buildings.json', 'utf8'));
+const enemyIds = Object.keys(EN).filter((k) => !k.startsWith('_'));
+
 {
-  const root = fileURLToPath(new URL('..', import.meta.url));
-  const K = JSON.parse(readFileSync(root + 'data/keep.json', 'utf8'));
-  const LL = JSON.parse(readFileSync(root + 'data/laneLevel.json', 'utf8'));
-  const mk = () => createKeep(K, LL.rows);
-
-  // --- поверхи ---
-  {
-    const k = mk();
-    assert.equal(k.level, 1);
-    assert.equal(k.floorCount, LL.rows, 'кімнат мусить бути стільки, скільки рядів');
-    assert.equal(k.branch, null);
-    assert.equal(k.floors.every((f) => f === null), true, 'на старті кімнати мусять бути порожні');
-    // Відкрито знизу вгору: найнижча завжди, верхні — за рівень.
-    assert.equal(k.isOpen(LL.rows - 1), true, 'найнижча кімната мусить бути відкрита від початку');
-    assert.equal(k.isOpen(0), K.floors.start >= LL.rows, 'верхня кімната відкрита зарано');
-
-    // Рівень додає рівно один поверх, і росте до стелі, а не повз неї.
-    let guard = 0;
-    while (k.canGrow()) { assert.ok(k.grow()); assert.ok(++guard < 50, 'grow не доходить до стелі'); }
-    assert.equal(k.floors.every((_, i) => k.isOpen(i)), true, 'не всі кімнати відкрились');
-    assert.equal(k.grow(), false, 'grow пробив стелю');
-    assert.equal(k.level, LL.rows - K.floors.start + 1, 'рівнів не стільки, скільки кімнат відкривати');
+  // --- рідкість ---
+  const R = WP.rarity;
+  assert.ok(R.length >= 3, 'рівнів рідкості замало, щоб різниця відчувалась');
+  assert.equal(R[0].min, 0, 'перший рівень має починатись від нуля, інакше погане обведення не має рівня');
+  for (let i = 1; i < R.length; i++) {
+    assert.ok(R[i].min > R[i - 1].min, `пороги рідкості не зростають на ${R[i].id}`);
+    assert.ok(R[i].mul > R[i - 1].mul, `множник ${R[i].id} не більший за ${R[i - 1].id}`);
+    assert.ok(R[i].stars > R[i - 1].stars, `зірок у ${R[i].id} не більше`);
   }
+  assert.ok(R[R.length - 1].min < 1, 'найвищий рівень недосяжний навіть ідеальним обведенням');
+  // Кольорове кодування: у кожного рівня своя ручка, і всі ручки є в палітрі.
+  const LK = JSON.parse(readFileSync(root + 'data/look.json', 'utf8'));
+  assert.equal(new Set(R.map((t) => t.pen)).size, R.length, 'два рівні рідкості однією ручкою');
+  for (const t of R) assert.ok(LK.pens[t.pen], `${t.id}: ручки ${t.pen} немає в look.pens`);
+  assert.equal(R[0].pen, 'pencil', 'common мусить бути «білою» — на папері це незафарбована, олівцева зірка');
+  assert.equal(R[R.length - 1].pen, 'orange', 'legendary — оранжева');
+  assert.equal(rarityOf(0, R).id, R[0].id);
+  assert.equal(rarityOf(1, R).id, R[R.length - 1].id);
+  assert.equal(rarityOf(R[1].min, R).id, R[1].id, 'поріг має бути включним');
+  assert.equal(rarityOf(R[1].min - 1e-9, R).id, R[0].id);
+  assert.equal(rarityOf(-5, R).id, R[0].id, 'від’ємна якість не має ламати вибір');
 
-  // Ціна рівня вежі росте й ніколи не спадає: інакше вигідно тягнути до кінця.
-  {
-    const k = mk();
-    let prev = 0;
-    while (k.canGrow()) {
-      const c = k.growCost();
-      assert.ok(c > prev, `ціна рівня вежі не зросла: ${prev} → ${c}`);
-      prev = c;
-      k.grow();
-    }
+  // Рідкість множить силу, але не геометрію: засяг і швидкість ті самі.
+  const sw = WP.weapons.sword;
+  const lo = unitStats(sw, R[0]), hi = unitStats(sw, R[R.length - 1]);
+  assert.ok(hi.hp > lo.hp && hi.damage > lo.damage, 'рідкість не додала сили');
+  near(hi.reach, lo.reach); near(hi.speed, lo.speed); near(hi.rate, lo.rate);
+
+  // --- зброя ---
+  const ids = weaponIds(WP);
+  assert.equal(ids.length, 7, `зброї ${ids.length}, а має бути 7: по три на рід і священик`);
+  const support = ids.filter((id) => WP.weapons[id].kind === 'support');
+  assert.equal(support.length, 1, 'священик має бути один');
+  const priest = WP.weapons[support[0]];
+  assert.ok(priest.stats.heal > 0 && priest.stats.range > 0 && priest.stats.damage === 0,
+    'священик лікує, дістає, і не б’є');
+  for (const kind of ['melee', 'ranged']) {
+    const ofKind = ids.filter((id) => WP.weapons[id].kind === kind);
+    assert.equal(ofKind.length, 3, `${kind}: ${ofKind.length} зброї замість 3`);
+    const classes = new Set(ofKind.map((id) => WP.weapons[id].cls));
+    assert.deepEqual([...classes].sort(), ['balanced', 'heavy', 'quick'], `${kind}: класи не по одному кожного`);
+
+    // Сирий dps у межах роду близький: різниця між зброями — клас, а не сила.
+    const dps = ofKind.map((id) => WP.weapons[id].stats.damage * WP.weapons[id].stats.rate);
+    const lo = Math.min(...dps), hi = Math.max(...dps);
+    assert.ok(hi <= lo * 1.2, `${kind}: dps ${lo.toFixed(1)}..${hi.toFixed(1)} — хтось домінує голими числами`);
   }
-
-  // Рівень вежі дає життя й підсилює її власну слабку гармату.
-  {
-    const k = mk();
-    const g0 = k.gun.damage, r0 = k.gun.range;
-    assert.equal(k.bonusLives, 0);
-    k.grow();
-    assert.ok(k.gun.damage > g0, 'гармата вежі не росте з рівнем');
-    assert.ok(k.gun.range > r0, 'радіус вежі не росте з рівнем');
-    assert.equal(k.bonusLives, K.grow.livesPer, 'рівень не дав життя');
-    assert.equal(k.gun.projectile, 'bolt', 'гармата вежі без сплеша мусить бути болтом');
-  }
-
-  // --- гілки ---
-  {
-    const k = mk();
-    assert.equal(k.canBranch(), false, 'гілку пропонують до потрібного рівня');
-    while (k.level < K.branchAt) k.grow();
-    assert.equal(k.canBranch(), true, 'гілку не пропонують на потрібному рівні');
-    assert.equal(k.pickBranch('немає_такої'), false, 'обрали гілку, якої немає');
-    assert.equal(k.branch, null, 'відмовлений вибір усе одно записався');
-
-    // Арсенал підіймає стелю РІВНЯ захисника: кімнат більше не додати, тому
-    // глибина мусить іти кудись іншим шляхом.
-    const a = mk();
-    while (a.level < K.branchAt) a.grow();
-    const cap0 = a.maxDefLevel;
-    assert.ok(a.pickBranch('arsenal'));
-    assert.equal(a.canBranch(), false, 'гілку можна обрати двічі');
-    assert.equal(a.maxDefLevel, cap0 + K.branches.arsenal.perk.defLevel, 'Арсенал не підняв стелю рівня');
-
-    // Форт дає щит, і він витрачається по одному та наливається між хвилями.
-    const f = mk();
-    while (f.level < K.branchAt) f.grow();
-    assert.ok(f.pickBranch('fort'));
-    assert.equal(f.shield, K.branches.fort.perk.shield, 'Форт не налив щит');
-    assert.ok(f.spendShield());
-    assert.equal(f.shield, K.branches.fort.perk.shield - 1);
-    while (f.spendShield()) { /* до нуля */ }
-    assert.equal(f.shield, 0);
-    assert.equal(f.spendShield(), false, 'щит витратили в мінус');
-    f.refillShield();
-    assert.equal(f.shield, K.branches.fort.perk.shield, 'щит не налився між хвилями');
-
-    // Без гілки щита немає взагалі — інакше Форт нічого не давав би.
-    const n = mk();
-    n.refillShield();
-    assert.equal(n.shield, 0);
-    assert.equal(n.spendShield(), false);
-  }
-
-  // --- захисники в поверхах ---
-  {
-    const k = mk();
-    const kinds = Object.keys(K.defenders);
-    const d = k.place(LL.rows - 1, kinds[0], 1);
-    assert.ok(d, 'захисник не став у порожній поверх');
-    assert.equal(d.level, 1);
-    assert.equal(d.floor, LL.rows - 1);
-    assert.ok(d.gun.damage > 0 && d.gun.range > 0, 'захисник без гармати');
-
-    assert.equal(k.place(LL.rows - 1, kinds[0], 1), null, 'у зайнятий поверх пустили другого');
-    assert.equal(k.place(99, kinds[0], 1), null, 'пустили в поверх, якого немає');
-    // Закрита кімната не приймає нікого — інакше рівень вежі нічого не значив би.
-    const shut = k.floors.findIndex((_, i) => !k.isOpen(i));
-    if (shut >= 0) assert.equal(k.place(shut, kinds[0], 1), null, 'пустили в забиту кімнату');
-    assert.equal(k.place(-1, kinds[0], 1), null, 'пустили в поверх з від’ємним номером');
-    assert.equal(k.place(1.5, kinds[0], 1), null, 'пустили в дробовий поверх');
-    assert.equal(k.place(1, 'немає_такого', 1), null, 'поставили захисника, якого немає в даних');
-    assert.equal(k.floors[1], null, 'невдале ставлення лишило слід');
-
-    // Сплеш вирішує тип снаряда — так само, як у складу лабіринту.
-    const mage = Object.entries(K.defenders).find(([, v]) => (v.stats.splash ?? 0) > 0);
-    if (mage) {
-      const m = mk().place(LL.rows - 1, mage[0], 1);
-      assert.equal(m.gun.projectile, 'ball', 'сплешовий захисник стріляє болтом');
-    }
-  }
-
-  const CAP = K.levelUp.max;
-  const FL = LL.rows - 1; // найнижча кімната: відкрита завжди
-
-  // --- рівні захисника: головна вісь глибини ---
-  {
-    const kind = Object.keys(K.defenders)[0];
-
-    // Прев'ю мусить збігатися з тим, що СПРАВДІ стається. Це не формальність:
-    // картка обіцяє числа до оплати, і розбіжність помітить не тест, а гравець.
-    const k = mk();
-    k.place(LL.rows - 1, kind, 0.8);
-    for (let i = 1; i < CAP; i++) {
-      const p = k.preview(FL);
-      assert.ok(p, `прев'ю зникло на рівні ${i}`);
-      const got = k.levelUp(FL);
-      assert.ok(got, `рівень ${i + 1} не став`);
-      assert.deepEqual([got.level], [p.level[1]], 'рівень розійшовся з прев’ю');
-      near(got.damage, p.damage[1]);
-      near(got.rate, p.rate[1]);
-      near(got.range, p.range[1]);
-    }
-
-    // Стеля тримається, і на ній прев'ю чесно каже «нікуди».
-    assert.equal(k.floors[FL].level, CAP, 'стеля рівня не та');
-    assert.equal(k.preview(FL), null, 'прев’ю обіцяє рівень понад стелю');
-    assert.equal(k.levelUp(FL), null, 'рівень пробив стелю');
-    assert.equal(k.floors[FL].level, CAP);
-
-    // Порожній поверх нічого не обіцяє й нічого не коштує.
-    const e = mk();
-    assert.equal(e.preview(FL), null, 'порожній поверх дав прев’ю');
-    assert.equal(e.levelUp(FL), null, 'підняли рівень порожньому поверху');
-    assert.equal(e.levelCost(FL), 0);
-    assert.equal(e.preview(99), null, 'прев’ю для поверху, якого немає');
-  }
-
-  // Усі три стати ростуть, і ціна росте разом із ними.
-  {
-    const kind = Object.keys(K.defenders)[0];
-    const k = mk();
-    const d0 = k.place(LL.rows - 1, kind, 1);
-    const base = { damage: d0.damage, rate: d0.rate, range: d0.range };
-    let prevCost = 0;
-    for (let i = 1; i < CAP; i++) {
-      const c = k.levelCost(FL);
-      assert.ok(c > prevCost, `ціна рівня захисника не зросла: ${prevCost} → ${c}`);
-      prevCost = c;
-      k.levelUp(FL);
-    }
-    const d1 = k.floors[FL];
-    assert.ok(d1.damage > base.damage, 'рівень не додав шкоди');
-    assert.ok(d1.rate > base.rate, 'рівень не додав темпу');
-    assert.ok(d1.range > base.range, 'рівень не додав радіуса');
-  }
-
-  // Якість обведення множить шкоду й темп, але НЕ радіус: від радіуса залежить,
-  // чи дістає поверх до крайнього ряду, і ставити це в залежність від того, як
-  // рівно провела рука, означало б зробити частину вежі мовчки марною.
-  {
-    const kind = Object.keys(K.defenders)[0];
-    const good = mk().place(LL.rows - 1, kind, 1);
-    const bad = mk().place(LL.rows - 1, kind, 0);
-    assert.ok(good.damage > bad.damage, 'старанний силует не сильніший за недбалий');
-    assert.ok(good.rate > bad.rate, 'якість не впливає на темп');
-    near(good.range, bad.range);
-  }
-
-  // --- геометрія: кімната = ряд ---
-  //
-  // Це і є те, через що вежа стоїть на всі ряди. Кімната й ряд ділять ту саму
-  // смугу тим самим `rowY`, тому індекс кімнати — це індекс ряду, і Δy між
-  // кімнатою та її рядом рівно нуль. Розійдуться числа кімнат і рядів — кімната
-  // опиниться навпроти міжряддя, і жоден інший тест цього не побачить.
-  {
-    const band = { y0: LL.band.y0, y1: LL.band.y1, rows: LL.rows };
-    assert.ok(rowHeight(band) >= 1, `кімната ${rowHeight(band)} клітинки — зіллються`);
-
-    for (let f = 0; f < band.rows; f++) {
-      // Тап у кімнату не має промахуватись — так само, як тап у ряд.
-      assert.equal(rowOf(band, rowY(band, f)), f, `кімната ${f} не зворотна`);
-      assert.ok(rowY(band, f) > band.y0 && rowY(band, f) < band.y1, `кімната ${f} за смугою`);
-      // Нуль, а не «майже нуль»: кімната стоїть РІВНО навпроти свого ряду.
-      near(rowY(band, f), rowY(band, f));
-    }
-
-    // Кімната мусить умістити силует, інакше фігура вилізе в сусідню.
-    for (const [id, d] of Object.entries(K.defenders)) {
-      assert.ok(d.size[1] <= rowHeight(band),
-        `${id} заввишки ${d.size[1]} не влазить у кімнату ${rowHeight(band)}`);
-    }
-  }
-
-  // Радіус: свій ряд накрити ПОВНІСТЮ, сусідній — з запасом.
-  //
-  // combat.pick міряє hypot(Δx, Δy), тому радіус, витрачений на вертикаль, до
-  // горизонталі не доходить. Кімната навпроти свого ряду має Δy = 0, і весь
-  // радіус іде туди, куди й мусить. До сусіднього ряду Δy = висота ряду, і
-  // саме там ховається тиха поломка: якщо радіус трохи менший, захисник
-  // перестає прикривати сусіда, і це видно лише за програшем.
-  {
-    const b = { y0: LL.band.y0, y1: LL.band.y1, rows: LL.rows };
-    const h = rowHeight(b);
-    const MIN_OWN = 3.5;   // клітинок по горизонталі у своєму ряду
-    const MIN_NEAR = 2.0;  // у сусідньому
-
-    for (const [id, def] of Object.entries(K.defenders)) {
-      const R = def.stats.range;
-      assert.ok(R >= MIN_OWN, `${id}: радіус ${R} закороткий навіть для свого ряду`);
-      const near1 = R * R - h * h;
-      assert.ok(
-        near1 > MIN_NEAR * MIN_NEAR,
-        `${id} радіусом ${R} не прикриває сусідній ряд: по горизонталі `
-        + `${near1 > 0 ? Math.sqrt(near1).toFixed(2) : 0}, треба ${MIN_NEAR}`,
-      );
-    }
-
-    // Вибір кімнати мусить важити, і важить він через РІЗНИЦЮ між захисниками,
-    // а не через те, що комусь бракує радіуса. Тому два різні інваріанти.
-    const frac = (R, rows) => {
-      const h2 = R * R - (rows * h) * (rows * h);
-      return h2 > 0 ? Math.sqrt(h2) / R : 0;
-    };
-
-    // Хоч один мусить бути спеціалістом свого ряду: через два ряди в нього
-    // лишається менше двох третин засягу, тому ставити його абиде — марно.
-    const local = Object.entries(K.defenders).filter(([, d]) => frac(d.stats.range, 2) < 0.62);
-    assert.ok(local.length >= 1,
-      "жоден захисник не прив’язаний до свого ряду — кімната ні на що не впливає");
-
-    // І не більше одного універсала, що дістає через три ряди: якби всі
-    // дотягувались усюди, вежа прикривала б поле однаково з будь-якої кімнати.
-    const reach3 = Object.entries(K.defenders)
-      .filter(([, d]) => d.stats.range * d.stats.range - (3 * h) * (3 * h) > MIN_NEAR * MIN_NEAR);
-    assert.ok(reach3.length <= 1,
-      `через три ряди дістають ${reach3.length} — різниці між кімнатами немає`);
-
-    // Власна слабка гармата вежі стоїть по центру смуги й мусить дістати кожен
-    // ряд: на першому рівні відкрита одна кімната, і без неї гра стоїть.
-    const cy = (b.y0 + b.y1) / 2;
-    for (let r = 0; r < b.rows; r++) {
-      const dy = Math.abs(cy - rowY(b, r));
-      const h2 = K.gun.range * K.gun.range - dy * dy;
-      assert.ok(h2 > MIN_NEAR * MIN_NEAR,
-        `гармата вежі радіусом ${K.gun.range} не дістає до ряду ${r} (Δy ${dy})`);
-    }
-  }
-
-  // --- дані ---
-  {
-    assert.ok(K.floors.start >= 1 && K.floors.start <= LL.rows, 'стартових кімнат не буває стільки');
-    assert.ok(K.grow.step > 1, 'ціна рівня вежі не росте');
-    assert.ok(K.grow.livesPer > 0, 'рівень вежі не дає життя — платити за нього нема за що');
-    assert.ok(K.gun.perLevel > 0, 'власна гармата вежі не росте з рівнем');
-    assert.ok(K.levelUp.step > 1, 'ціна рівня захисника не росте');
-    assert.ok(CAP > 1, 'захисника нема куди качати');
-    assert.ok(K.branchAt > 1, 'гілку пропонують одразу на старті');
-
-    for (const [id, d] of Object.entries(K.defenders)) {
-      assert.ok(d.cost > 0, `${id}: немає ціни`);
-      assert.ok(d.pen && d.pen !== 'red', `${id}: червона ручка назавжди за ворогами`);
-      assert.ok(d.size?.length === 2 && d.size[0] > 0 && d.size[1] > 0, `${id}: немає розміру`);
-      assert.ok(d.stats.damage > 0 && d.stats.rate > 0 && d.stats.range > 0, `${id}: порожні стати`);
-      assert.ok(Array.isArray(d.outline), `${id}: немає контуру`);
-      // Штрихів не більше трьох: scoreTrace карає за кожен зайвий відрив пальця,
-      // а малювати доводиться під час хвилі.
-      assert.ok(d.outline.length <= 3, `${id}: ${d.outline.length} штрихів, дозволено 3`);
-      for (const [i, s] of d.outline.entries()) {
-        assert.ok(s.length >= 2, `${id}: штрих ${i} з однієї точки`);
+  for (const id of ids) {
+    const w = WP.weapons[id];
+    assert.ok(w.cost > 0, `${id}: без ціни`);
+    assert.ok(w.stats.hp > 0 && (w.stats.damage > 0 || w.stats.heal > 0) && w.stats.rate > 0 && w.stats.speed > 0, `${id}: стати неповні`);
+    if (w.kind === 'melee') assert.ok(w.stats.reach > 0, `${id}: мілі без reach нікого не спинить`);
+    else if (w.kind === 'ranged') assert.ok(w.stats.range > 0 && w.stats.shot > 0, `${id}: ренж без range/shot`);
+    assert.ok(w.grip?.length === 2, `${id}: без grip нема за що тримати`);
+    assert.ok(w.title && w.hint, `${id}: без підпису на полиці трафарет не читається`);
+    // Штрихів не більше п'яти: scoreTrace карає за кожен зайвий відрив пальця.
+    assert.ok(w.outline.length >= 1 && w.outline.length <= 5, `${id}: ${w.outline.length} штрихів, дозволено 1..5`);
+    for (const [i, s] of w.outline.entries()) {
+      assert.ok(s.length >= 2, `${id}: штрих ${i} з однієї точки`);
+      for (const [x, y] of s) {
+        assert.ok(x >= 0 && x <= 1 && y >= 0 && y <= 1,
+          `${id}: точка (${x},${y}) поза коробкою 0..1 — обведення промахнеться повз рамку`);
       }
     }
-
-    for (const [id, b] of Object.entries(K.branches)) {
-      assert.ok(b.title, `гілка ${id}: немає підпису`);
-      assert.ok(b.cost > 0, `гілка ${id}: немає ціни`);
-      assert.ok(Object.values(b.perk ?? {}).some((v) => v > 0),
-        `гілка ${id}: перк нічого не дає`);
-    }
-    // Ціна однакова: вибір мусить бути про механіку, а не про те, на що вистачає.
-    const costs = new Set(Object.values(K.branches).map((b) => b.cost));
-    assert.equal(costs.size, 1, 'гілки різної ціни — вибір стане про гроші, не про механіку');
-
   }
+  // Тіло на кожен рід, і точка руки над землею.
+  for (const kind of ['melee', 'ranged', 'support']) {
+    const b = WP.bodies[kind];
+    assert.ok(b?.part && b.size?.length === 2 && b.hand?.length === 2, `${kind}: тіло неповне`);
+    assert.ok(b.hand[1] < 0 && -b.hand[1] < b.size[1], `${kind}: рука не на тілі`);
+  }
+
+  // --- контри: камінь-ножиці-папір ---
+  const enemyClasses = [...new Set(enemyIds.map((id) => EN[id].cls))];
+  assert.ok(enemyClasses.length >= 3, 'класів ворогів замало для трикутника');
+  const bestVs = {};
+  for (const ec of enemyClasses) {
+    let best = null, worst = null;
+    for (const wc of ['balanced', 'heavy', 'quick']) {
+      const m = counterMul(WP.counters, wc, ec);
+      if (!best || m > best.m) best = { wc, m };
+      if (!worst || m < worst.m) worst = { wc, m };
+    }
+    assert.ok(counterMul(WP.counters, 'balanced', ec) >= worst.m, `проти ${ec} збалансована зброя найгірша — тоді вона просто гірша`);
+    bestVs[ec] = best.wc;
+  }
+  assert.equal(bestVs.armored, 'heavy', 'броню має ламати важка зброя');
+  assert.equal(bestVs.swift, 'quick', 'бігунів має різати швидка зброя');
+  assert.ok(counterMul(WP.counters, 'heavy', 'swift') < 1, 'важка має не встигати за бігуном');
+  assert.ok(counterMul(WP.counters, 'quick', 'armored') < 1, 'швидка має дряпати броню');
+  assert.equal(counterMul(WP.counters, 'balanced', 'armored'), 1);
+  // Трикутник має бути помітним, не косметичним: правильна зброя щонайменше
+  // втричі краща за неправильну проти того самого ворога.
+  for (const [good, bad, ec] of [['heavy', 'quick', 'armored'], ['quick', 'heavy', 'swift']]) {
+    const ratio = counterMul(WP.counters, good, ec) / counterMul(WP.counters, bad, ec);
+    assert.ok(ratio >= 3, `проти ${ec}: ${good} лише в ${ratio.toFixed(1)} рази кращий за ${bad} — трикутника не видно`);
+  }
+  assert.ok(counterMul(WP.counters, 'balanced', 'standard') > 1, 'збалансована має мати свою нішу — базового ворога');
+  assert.equal(counterMul(WP.counters, 'нема', 'нема'), 1, 'невідомий клас має давати 1, а не NaN');
+
+  // --- вороги ---
+  const by = (cls) => enemyIds.filter((id) => EN[id].cls === cls).map((id) => EN[id]);
+  for (const id of enemyIds) {
+    const e = EN[id];
+    for (const k of ['hp', 'speed', 'damage', 'rate', 'reach', 'size']) {
+      // Чорнило з ворогів не падає — його дають будівлі. bounty тут не має бути.
+      assert.equal(e.bounty, undefined, `${id}: bounty — чорнило з ворогів більше не падає`);
+      assert.ok(e[k] > 0, `${id}: ${k} порожній`);
+    }
+    assert.ok(e.rig, `${id}: без рига`);
+    assert.ok(['standard', 'swift', 'armored'].includes(e.cls), `${id}: невідомий клас ${e.cls}`);
+    // Власний бонус лише в тих, хто когось контрить: інакше вухань теж «контрить».
+    if (e.cls === 'standard') assert.ok(!e.vs, `${id}: базовий ворог не має бонусів`);
+    else assert.ok(e.vs && Object.values(e.vs).some((v) => v > 1), `${id}: клас ${e.cls}, а бонусу проти нікого`);
+  }
+  const std = by('standard')[0], swift = by('swift')[0], arm = by('armored')[0];
+  assert.ok(swift.speed > std.speed && std.speed > arm.speed, 'швидкості класів переплутані');
+  assert.ok(arm.hp > std.hp && std.hp > swift.hp, 'живучість класів переплутана');
+  assert.ok(arm.damage > std.damage, 'здоровань має бити болючіше за вуханя');
+  assert.ok(swift.vs.ranged > 1 && !swift.vs.melee, 'бігун має добігати до стрільців, а не до щитів');
+  assert.ok(arm.vs.melee > 1 && !arm.vs.ranged, 'здоровань має ламати блокувальників');
 }
 
-// --- lane mode: дані рівня й союзників --------------------------------------
-// Найтихіший спосіб зламати режим — перейменувати ключ у JSON: загін мовчки
-// візьме дефолти, і союзник стане слабшим, ніж задумано, без жодної помилки.
+// --- lane mode: рівень ------------------------------------------------------
 {
-  const root = fileURLToPath(new URL('..', import.meta.url));
-  const LL = JSON.parse(readFileSync(root + 'data/laneLevel.json', 'utf8'));
-  const AL = JSON.parse(readFileSync(root + 'data/allies.json', 'utf8'));
-
-  // Геометрія рівня має бути осмисленою: вежа зліва, спавн справа, загін між ними.
-  assert.ok(LL.towerX < LL.squad.xLeft, 'загін стоїть позаду вежі');
-  assert.ok(LL.squad.xLeft < LL.squad.xRight, 'колонки загону переплутані');
-  assert.ok(LL.squad.xRight < LL.spawnX, 'передова колонка за точкою спавну');
+  // Зліва направо: слот юніта → лінія дому → фундаменти → фронт → спавн.
+  assert.ok(LL.slot.x0 < LL.slot.x1, 'слот вивернутий');
+  assert.ok(LL.slot.x1 < LL.homeX, 'слот юніта має бути ЗЛІВА від лінії дому, за лазером');
+  const P = LL.plots;
+  assert.ok(P.cols === 3, 'фундаментів має бути три стовпчики');
+  assert.ok(P.x0 - P.side / 2 > LL.homeX, 'перший фундамент налазить на лінію дому');
+  const lastPlot = P.x0 + P.step * (P.cols - 1) + P.side / 2;
+  assert.ok(lastPlot < LL.holdX, 'фундаменти за лінією фронту — бійці їх не прикриють');
+  assert.ok(P.side < P.step, 'фундаменти налазять один на одного');
+  assert.ok(P.side <= rowHeight({ y0: LL.band.y0, y1: LL.band.y1, rows: LL.rows }), 'фундамент вищий за ряд');
+  assert.ok(LL.holdX < LL.spawnX, 'лінія фронту за точкою спавну');
   assert.ok(LL.band.y0 < LL.band.y1, 'смуга рядів вивернута');
   assert.ok(LL.rows >= 1);
   assert.ok(LL.core.cols > LL.spawnX - 2, `ядро ${LL.core.cols} вужче за спавн ${LL.spawnX}`);
+  assert.ok(LL.band.y1 <= LL.core.rows, 'смуга рядів вилазить за ядро');
+  assert.equal(LL.drip, undefined, 'крапля з неба знята: чорнило тільки з будівель');
+  assert.ok(LL.laser.charges >= 1, 'лазер без зарядів — лінія без захисту');
+  assert.ok(LL.slowWhileDrawing > 0 && LL.slowWhileDrawing <= 0.2, 'сповільнення під час малювання має бути ~90%');
+  assert.ok(LL.supportBack > 0, 'священик без відступу стоятиме на передовій');
 
-  // Ряди мають лишатись у смузі та не злипатись.
+  // Вороги повільні навмисно: гравець мусить встигати обводити. Вухань іде
+  // смугу не швидше, ніж за 30 с.
+  const std = EN[Object.keys(EN).find((id) => EN[id].cls === 'standard')];
+  assert.ok((LL.spawnX - LL.homeX) / std.speed >= 30, 'базовий ворог проходить смугу швидше за 30 с — малювати не встигнеш');
+
+  // Відкриття зброї: стартова по одній на бойовий рід, решта — за хвилі, і всі
+  // до останньої хвилі. Не відкрита ніколи зброя — це намальований трафарет,
+  // якого гравець ніколи не побачить.
+  const all = weaponIds(WP);
+  for (const id of LL.startWeapons) assert.ok(WP.weapons[id], `стартової зброї ${id} немає`);
+  const startKinds = LL.startWeapons.map((id) => WP.weapons[id].kind);
+  assert.ok(startKinds.includes('melee') && startKinds.includes('ranged'), 'на старті має бути і мілі, і ренж');
+  assert.ok(LL.unlocks.length >= 1, 'винагород за хвилі немає');
+  let prevWave = -1;
+  for (const u of LL.unlocks) {
+    assert.ok(u.wave > prevWave, 'винагороди не за зростанням хвиль');
+    assert.ok(u.wave >= 1 && u.wave < LL.waves.length, `винагорода на хвилі ${u.wave}, а хвиль ${LL.waves.length}`);
+    for (const id of u.weapons) assert.ok(WP.weapons[id], `винагорода ${id} — такої зброї немає`);
+    prevWave = u.wave;
+  }
+  const last = unlockedAt(LL.waves.length - 1, LL.startWeapons, LL.unlocks);
+  for (const id of all) assert.ok(last.has(id), `${id} не відкривається ніколи`);
+
+  // Будівлі: колодязь від початку (без нього чорнила немає взагалі), решта за
+  // хвилі, і все відкривається до останньої.
+  const bIds = buildingIds(BD);
+  assert.ok(LL.startBuildings.includes('well'), 'без колодязя на старті чорнила не буде звідки взяти');
+  for (const id of LL.startBuildings) assert.ok(BD.buildings[id], `стартової будівлі ${id} немає`);
+  for (const u of LL.buildingUnlocks) {
+    assert.ok(u.wave >= 1 && u.wave < LL.waves.length, `будівлі на хвилі ${u.wave}, а хвиль ${LL.waves.length}`);
+    for (const id of u.buildings) assert.ok(BD.buildings[id], `винагорода ${id} — такої будівлі немає`);
+  }
+  const lastB = unlockedAt(LL.waves.length - 1, LL.startBuildings, LL.buildingUnlocks, 'buildings');
+  for (const id of bIds) assert.ok(lastB.has(id), `будівля ${id} не відкривається ніколи`);
+  assert.equal(unlockedAt(0, LL.startBuildings, LL.buildingUnlocks, 'buildings').size, LL.startBuildings.length);
+
+  for (const id of bIds) {
+    const b = BD.buildings[id];
+    assert.ok(b.title && b.hint, `${id}: без підпису`);
+    assert.ok(b.cost > 0 && b.hp > 0, `${id}: без ціни або без hp`);
+    assert.ok(b.size?.length === 2 && b.size[0] <= P.side + 0.01 && b.size[1] <= P.side + 0.01, `${id}: не влазить у фундамент`);
+    assert.ok(b.outline.length >= 1 && b.outline.length <= 5, `${id}: ${b.outline.length} штрихів, дозволено 1..5`);
+    for (const [i, st] of b.outline.entries()) {
+      assert.ok(st.length >= 2, `${id}: штрих ${i} з однієї точки`);
+      for (const [x, y] of st) assert.ok(x >= 0 && x <= 1 && y >= 0 && y <= 1, `${id}: точка поза коробкою`);
+    }
+    assert.ok(['well', 'barricade', 'banner', 'forge', 'chapel', 'trap'].includes(b.effect.type), `${id}: невідомий ефект`);
+  }
+  const kinds = new Set(bIds.map((id) => BD.buildings[id].effect.type));
+  assert.ok(kinds.has('well') && kinds.has('barricade') && kinds.has('banner') && kinds.has('forge') && kinds.has('chapel') && kinds.has('trap'),
+    'бракує якогось роду будівель');
+  const banners = bIds.filter((id) => BD.buildings[id].effect.type === 'banner').map((id) => BD.buildings[id].effect.vs);
+  assert.deepEqual([...banners].sort(), ['armored', 'standard', 'swift'], 'прапорів має бути по одному на клас ворога');
+  // Колодязь має окуповуватись за сесію: 6 хвиль по ~30 с — щонайменше 5 крапель.
+  const well = BD.buildings.well.effect;
+  assert.ok(well.ink * 5 > BD.buildings.well.cost, 'колодязь не окуповується');
+  assert.equal(unlockedAt(0, LL.startWeapons, LL.unlocks).size, LL.startWeapons.length, 'на першій хвилі відкрито більше за стартове');
+  // Швидка зброя відкривається не пізніше за бігунів, важка — за здорованів:
+  // трикутник треба дати в руки тоді, коли він потрібен.
+  const firstOf = (cls) => LL.waves.findIndex((w) => Object.keys(w.mix).some((id) => EN[id].cls === cls));
+  for (const [ec, wc] of [['swift', 'quick'], ['armored', 'heavy']]) {
+    const first = firstOf(ec);
+    if (first < 0) continue;
+    const have = unlockedAt(first, LL.startWeapons, LL.unlocks);
+    assert.ok([...have].some((id) => WP.weapons[id].cls === wc), `${ec} прийшли раніше за ${wc} зброю`);
+  }
+
   const band = { y0: LL.band.y0, y1: LL.band.y1, rows: LL.rows };
   assert.ok(rowHeight(band) >= 1, `ряд ${rowHeight(band)} клітинки — вороги зіллються`);
-  assert.ok(rowY(band, 0) > band.y0 && rowY(band, LL.rows - 1) < band.y1);
-  assert.ok(LL.band.y1 <= LL.core.rows, 'смуга рядів вилазить за ядро');
+  for (const id of enemyIds) {
+    assert.ok(EN[id].size <= rowHeight(band), `${id} заввишки ${EN[id].size} не влазить у ряд ${rowHeight(band)}`);
+  }
 
   assert.ok(LL.waves.length, 'хвиль немає');
   for (const [i, w] of LL.waves.entries()) {
     assert.ok(w.count > 0 && w.every > 0, `хвиля ${i} порожня`);
     assert.ok(w.row == null || (w.row >= 0 && w.row < LL.rows), `хвиля ${i}: ряду ${w.row} не існує`);
+    assert.ok(w.mix && Object.values(w.mix).some((v) => v > 0), `хвиля ${i}: mix порожній`);
+    for (const id of Object.keys(w.mix)) assert.ok(EN[id], `хвиля ${i}: ворога ${id} немає в laneEnemies.json`);
   }
-
-  // Обидва типи союзників мають бути в каталозі — squad.ts шукає їх за іменем.
-  for (const kind of ['melee', 'ranged']) {
-    const d = AL[kind];
-    assert.ok(d, `у allies.json немає ${kind}`);
-    assert.ok(d.outline?.length, `${kind}: немає контуру`);
-    for (const [i, s] of d.outline.entries()) {
-      assert.ok(s.length >= 2, `${kind}: штрих ${i} з однієї точки`);
-      for (const [x, y] of s) {
-        assert.ok(x >= 0 && x <= 1 && y >= 0 && y <= 1,
-          `${kind}: точка (${x},${y}) поза коробкою 0..1 — обведення промахнеться повз рамку`);
-      }
-    }
-    assert.ok(d.stats.hp > 0 && d.stats.damage > 0 && d.stats.rate > 0 && d.stats.life > 0,
-      `${kind}: стати неповні`);
-    assert.ok(d.cost > 0, `${kind}: без ціни`);
-  }
-  assert.ok(AL.ranged.stats.range > 0, 'ренжовий без радіуса — стрілятиме впритул');
-  assert.ok(AL.melee.stats.reach > 0, 'мілі без reach — не зупинить нікого');
-
-  // Ручка союзника. Силует у гравця тепер свій (bakeTrace), але маска біла:
-  // без pen вона малюється дефолтною ручкою, а збіг із ручкою ворога або з
-  // ручкою другого типу не дає ні помилки, ні варнінга — гра працює, а поле
-  // не читається. Один раз ми на це вже наступили.
-  {
-    const RG = JSON.parse(readFileSync(root + 'data/rigs.json', 'utf8'));
-    const BL = JSON.parse(readFileSync(root + 'data/balance.json', 'utf8'));
-    const foes = new Set(
-      Object.values(BL.enemies).map((e) => RG[e.rig]?.parts?.[0]?.pen),
-    );
-    assert.ok(foes.size, 'не знайшлось жодної ручки ворога — перевірка нічого не стереже');
-    for (const kind of ['melee', 'ranged']) {
-      const pen = AL[kind].pen;
-      assert.ok(pen, `${kind}: без pen — маска намалюється дефолтною ручкою`);
-      assert.ok(!foes.has(pen),
-        `${kind}: ручка ${pen} — це ручка ворога, свого не відрізнити від чужого`);
-    }
-    assert.notEqual(AL.melee.pen, AL.ranged.pen,
-      'мілі й ренж однією ручкою — в бою їх не розрізнити, а поводяться вони по-різному');
-  }
-
-  // Найголовніше: справжні дані справді дають робочий загін.
-  const squad = createSquad({
-    rows: LL.rows, cols: LL.squad.cols,
-    xLeft: LL.squad.xLeft, xRight: LL.squad.xRight,
-    melee: AL.melee.stats, ranged: AL.ranged.stats,
-  });
-  const m = squad.add('melee', 0, 1).ally;
-  const r = squad.add('ranged', 0, 1).ally;
-  assert.ok(m.hp > 0 && m.damage > 0 && m.reach > 0, 'мілі зібрався з дефолтів, а не з даних');
-  assert.ok(r.gun.range > 1, 'ренжовому не доїхав радіус із даних');
-  assert.ok(m.x > r.x, 'мілі має стояти попереду ренжового');
-  assert.equal(squad.blockerAt(0, LL.spawnX)?.id, m.id, 'мілі з даних не блокує');
+  // Перша хвиля — лише базовий ворог: контри треба спершу показати, а потім вимагати.
+  assert.deepEqual(Object.keys(LL.waves[0].mix), ['earling'], 'перша хвиля вже з контрами');
 }
 
-/** Причина відмови add(), щоб не розписувати ok-перевірку щоразу. */
-function s2ok(r) {
-  return r.ok ? null : r.reason;
+// --- lane mode: крок бою ----------------------------------------------------
+// Ряд — це черга: ніхто нікого не обходить. Саме це найлегше зламати тихо:
+// союзник, що пройшов крізь ворога, ворог, що б'є через ряд, контри, що не
+// доїхали до шкоди.
+{
+  const mk = () => createArmy({ weapons: WP, rows: 4, slotX: 2, holdX: 11, homeX: 0.8 });
+  const mkTown = () => createTown({
+    data: BD, rarity: WP.rarity, rows: 4, cols: 3, plotX: (c) => 3 + c * 2, plotHalf: 0.8,
+  });
+  const foe = (over = {}) => ({
+    row: 0, x: 20, hp: 40, cls: 'standard', damage: 5, rate: 1, reach: 0.6, speed: 1.5, cd: 0,
+    moving: false, ...over,
+  });
+  const run = (army, foes, seconds, dt = 0.05, world) => {
+    const ev = { a: [], f: [] };
+    for (let t = 0; t < seconds; t += dt) {
+      ev.a.push(...army.stepAllies(foes, dt));
+      ev.f.push(...army.stepFoes(foes, dt, world));
+    }
+    return ev;
+  };
+
+  // Виклик: зброя з даних, рідкість із якості, слот, відмови.
+  {
+    const a = mk();
+    const r = a.summon('sword', 1, 1);
+    assert.ok(r.ok);
+    assert.equal(r.ally.kind, 'melee');
+    assert.equal(r.ally.cls, 'balanced');
+    assert.equal(r.ally.rarity.id, 'legendary', 'ідеальне обведення не дало вищої рідкості');
+    near(r.ally.x, 2);
+    assert.equal(r.ally.reach, WP.weapons.sword.stats.reach);
+    const bad = a.summon('sword', 1, 0);
+    assert.equal(bad.ally.rarity.id, 'common');
+    assert.ok(bad.ally.hp < r.ally.hp, 'common живучіший за legendary');
+
+    assert.equal(a.summon('нема', 0, 1).reason, 'немає такої зброї');
+    assert.equal(a.summon('_weapons', 0, 1).reason, 'немає такої зброї');
+    assert.equal(a.summon('sword', 9, 1).reason, 'немає такого ряду');
+    assert.equal(a.summon('sword', 1.5, 1).reason, 'немає такого ряду');
+    assert.equal(a.allies.length, 2, 'невдалий виклик лишив слід');
+
+    const rg = a.summon('bow', 0, 1).ally;
+    assert.equal(rg.kind, 'ranged');
+    assert.ok(rg.range > 0 && rg.reach === 0);
+  }
+
+  // Порожній ряд: іде до фронту й стає рівно на ньому, не далі.
+  {
+    const a = mk();
+    const s = a.summon('sword', 0, 1).ally;
+    run(a, [], 3);
+    assert.ok(s.x > 2 && s.x < 11, `за 3 с має бути в дорозі, а він на ${s.x}`);
+    assert.equal(s.moving, true);
+    run(a, [], 20);
+    near(s.x, 11);
+    assert.equal(s.moving, false, 'на фронті має стояти');
+  }
+
+  // Мілі спиняється перед ворогом у reach і б'є по відкату; ворог спиняється
+  // перед ним у своєму reach і б'є у відповідь. Ніхто крізь нікого не проходить.
+  {
+    const a = mk();
+    const s = a.summon('sword', 0, 1).ally;
+    // Живучий, щоб за 4 с не вмер: тут перевіряємо чергу, а не вбивство.
+    const f = foe({ x: 6, hp: 1000 });
+    const ev = run(a, [f], 4);
+    assert.ok(f.x > s.x, 'ворог пройшов крізь союзника');
+    assert.ok(f.x - s.x <= Math.max(s.reach, f.reach) + 0.2, `зійшлись не впритул: ${f.x - s.x}`);
+    const strikes = ev.a.filter((e) => e.type === 'strike');
+    const hits = ev.f.filter((e) => e.type === 'hit');
+    assert.ok(strikes.length >= 1, 'союзник не вдарив');
+    assert.ok(hits.length >= 1, 'ворог не вдарив у відповідь');
+    assert.ok(!ev.f.some((e) => e.type === 'leak'), 'ворог протік крізь блокувальника');
+    assert.equal(s.moving, false); assert.equal(f.moving, false);
+    // Темп: за 4 с меч (1/с) б'є приблизно 3-4 рази, не 80.
+    assert.ok(strikes.length <= 5, `меч ударив ${strikes.length} разів за 4 с`);
+    // Шкода застосована в моделі, а не обіцяна.
+    near(f.hp, 1000 - strikes.reduce((n, e) => n + e.amount, 0), 1e-6);
+  }
+
+  // Спис б'є першим: його reach більший за reach ворога, тому перша подія — його.
+  {
+    const a = mk();
+    a.summon('spear', 0, 1);
+    const f = foe({ x: 6 });
+    let first = null;
+    for (let t = 0; t < 4 && !first; t += 0.05) {
+      const ea = a.stepAllies([f], 0.05), ef = a.stepFoes([f], 0.05);
+      if (ea.length) first = 'ally';
+      else if (ef.length) first = 'foe';
+    }
+    assert.equal(first, 'ally', 'спис мав ударити раніше за ворога');
+  }
+
+  // Ренжовий спиняється на range і стріляє, шкоду не застосовує сам (снаряд летить).
+  {
+    const a = mk();
+    const b = a.summon('bow', 0, 1).ally;
+    const f = foe({ x: 12, speed: 0 });
+    const ev = run(a, [f], 8);
+    assert.ok(ev.a.some((e) => e.type === 'shoot'), 'лук не вистрілив');
+    assert.ok(!ev.a.some((e) => e.type === 'strike'), 'лук б’є врукопашну');
+    assert.ok(f.x - b.x <= b.range + 0.1, `лук не підійшов на засяг: ${f.x - b.x}`);
+    assert.ok(f.x - b.x > b.range - 1, 'лук підійшов упритул замість стріляти здалеку');
+    assert.equal(f.hp, 40, 'постріл сам завдав шкоди без снаряда');
+    // Влучання — через hitOf, тим самим кодом, що удар.
+    const h = a.hitOf(b, f);
+    const k = counterMul(WP.counters, b.cls, f.cls);
+    near(h.amount, b.damage * k); assert.equal(h.bonus, k > 1);
+  }
+
+  // Контри доїжджають до шкоди: булава проти броні — бонус, проти бігуна — штраф.
+  {
+    const a = mk();
+    const m = a.summon('mace', 0, 1).ally;
+    const arm = a.hitOf(m, foe({ cls: 'armored' }));
+    const sw = a.hitOf(m, foe({ cls: 'swift' }));
+    const st = a.hitOf(m, foe());
+    assert.ok(arm.amount > st.amount && arm.bonus, 'булава не ламає броню');
+    assert.ok(sw.amount < st.amount && !sw.bonus && sw.penalty, 'булава встигає за бігуном');
+    assert.ok(!st.penalty, 'проти базового ворога штрафу не має бути');
+    near(arm.amount, m.damage * WP.counters.heavy.armored);
+
+    // І в подіях удару теж, а не лише в hitOf.
+    const f = foe({ x: 3, cls: 'armored', speed: 0, hp: 1000 });
+    const ev = run(a, [f], 3);
+    const s = ev.a.find((e) => e.type === 'strike');
+    assert.ok(s?.bonus, 'бонус не дійшов до події удару');
+    near(s.amount, arm.amount);
+  }
+
+  // Ворожий бонус проти роду: здоровань ламає мілі сильніше, ніж ренж.
+  {
+    const a = mk();
+    const m = a.summon('sword', 0, 1).ally;
+    const r = a.summon('bow', 1, 1).ally;
+    const fm = foe({ x: 2.4, speed: 0, vs: { melee: 1.4 } });
+    const fr = foe({ x: 2.4, row: 1, speed: 0, vs: { melee: 1.4 } });
+    const ev = run(a, [fm, fr], 1.2);
+    const hm = ev.f.find((e) => e.type === 'hit' && e.ally === m);
+    const hr = ev.f.find((e) => e.type === 'hit' && e.ally === r);
+    assert.ok(hm && hr, 'ворог не вдарив когось із двох');
+    near(hm.amount, 5 * 1.4); near(hr.amount, 5);
+  }
+
+  // Ряди незалежні: ворог у ряду 1 не спиняється об союзника ряду 0 й протікає.
+  {
+    const a = mk();
+    a.summon('sword', 0, 1);
+    const f = foe({ row: 1, x: 3, speed: 4 });
+    const ev = run(a, [f], 1.5);
+    assert.ok(ev.f.some((e) => e.type === 'leak'), 'ворог чужого ряду не протік');
+    assert.ok(!ev.f.some((e) => e.type === 'hit'), 'ворог ударив через ряд');
+    assert.ok(!ev.a.some((e) => e.type === 'strike'), 'союзник ударив через ряд');
+  }
+
+  // Смерть: союзник зникає зі списку, і наступний у ряду стає ціллю.
+  {
+    const a = mk();
+    const first = a.summon('sling', 0, 1).ally;
+    const second = a.summon('sword', 0, 1).ally;
+    second.x = 1.5; // позаду
+    const f = foe({ x: first.x + 0.3, speed: 0, damage: 1000 });
+    const ev = run(a, [f], 1.2);
+    const kill = ev.f.find((e) => e.type === 'hit' && e.killed);
+    assert.ok(kill && kill.ally === first, 'перший удар мав убити першого в черзі');
+    assert.ok(!a.allies.includes(first), 'мертвий лишився в загоні');
+    assert.ok(a.allies.includes(second));
+    assert.equal(a.damage(second, 1), false);
+    assert.equal(a.damage(second, 1e6), true);
+    assert.equal(a.allies.length, 0);
+  }
+
+  // Убитий ворог не ціль: союзник іде далі, а не б'є труп.
+  {
+    const a = mk();
+    const s = a.summon('sword', 0, 1).ally;
+    const dead = foe({ x: 3, hp: 0 });
+    run(a, [dead], 2);
+    assert.ok(s.x > 3.5, 'союзник спинився об мертвого');
+  }
+
+  // Священик: іде за бійцем, стає позаду в засягу, лікує пораненого, не б'є.
+  {
+    const a = mk();
+    const s = a.summon('sword', 0, 1).ally;
+    const p = a.summon('cross', 0, 1).ally;
+    assert.equal(p.kind, 'support');
+    assert.ok(p.heal > 0 && p.damage === 0);
+    s.x = 8; s.hp = s.maxHp - 20;
+    const ev = run(a, [], 6);
+    assert.ok(p.x < s.x, 'священик обігнав бійця');
+    assert.ok(s.x - p.x <= p.range + 0.1, `священик не підійшов у засяг: ${s.x - p.x}`);
+    const heals = ev.a.filter((e) => e.type === 'heal');
+    assert.ok(heals.length >= 1, 'священик не лікував');
+    assert.ok(heals[0].targets.includes(s));
+    assert.ok(s.hp > s.maxHp - 20, 'зцілення не дійшло');
+    assert.ok(s.hp <= s.maxHp, 'вилікував понад максимум');
+    assert.ok(!ev.a.some((e) => e.type === 'strike' && e.ally === p), 'священик б’є');
+    // Здоровий не лікується: імпульси не витрачаються дарма.
+    s.hp = s.maxHp;
+    const ev2 = run(a, [], 3);
+    assert.equal(ev2.a.filter((e) => e.type === 'heal').length, 0, 'лікує здорового');
+  }
+
+  // Священик без бійців тримається позаду фронту, а не на ньому.
+  {
+    const a = mk();
+    const p = a.summon('cross', 1, 1).ally;
+    run(a, [], 20);
+    assert.ok(p.x < 11 && p.x > 8, `священик без бійців має стояти за фронтом, а він на ${p.x}`);
+    // Ворог б'є його як будь-кого.
+    const f = foe({ row: 1, x: p.x + 0.3, speed: 0 });
+    const ev = run(a, [f], 1.2);
+    assert.ok(ev.f.some((e) => e.type === 'hit' && e.ally === p), 'ворог не б’є священика');
+  }
+
+  // Будівлі: ворог спиняється перед будівлею й ламає її; союзники проходять крізь.
+  {
+    const a = mk();
+    const obst = { row: 0, x: 4, w: 0.8, hp: 100 };
+    const f = foe({ x: 8, speed: 2 });
+    const ev = run(a, [f], 3, 0.05, { obstacles: [obst] });
+    assert.ok(f.x >= obst.x + obst.w, 'ворог пройшов крізь будівлю');
+    const smash = ev.f.filter((e) => e.type === 'smash');
+    assert.ok(smash.length >= 1, 'ворог не ламає будівлю');
+    assert.equal(smash[0].obstacle, obst);
+    assert.ok(!ev.f.some((e) => e.type === 'leak'), 'протік крізь будівлю');
+    // Модель НЕ віднімає hp будівлі сама — це робить місто по події.
+    assert.equal(obst.hp, 100);
+
+    const s = a.summon('sword', 0, 1).ally;
+    run(a, [], 8, 0.05, { obstacles: [obst] });
+    assert.ok(s.x > obst.x + obst.w, 'союзник застряг об свою ж будівлю');
+  }
+
+  // Союзник ближче за будівлю — б'є союзника; зруйнована будівля (hp 0) не ціль.
+  {
+    const a = mk();
+    const s = a.summon('sword', 0, 1).ally;
+    s.x = 6;
+    const obst = { row: 0, x: 4, w: 0.8, hp: 100 };
+    const f = foe({ x: 6.5, speed: 0 });
+    const ev = run(a, [f], 1.2, 0.05, { obstacles: [obst] });
+    assert.ok(ev.f.some((e) => e.type === 'hit' && e.ally === s), 'мав бити союзника, який ближче');
+    assert.ok(!ev.f.some((e) => e.type === 'smash'), 'бив будівлю через союзника');
+
+    const dead = { row: 0, x: 4, w: 0.8, hp: 0 };
+    const g = foe({ x: 5, speed: 2 });
+    const ev2 = run(mk(), [g], 3, 0.05, { obstacles: [dead] });
+    assert.ok(g.x < dead.x, 'ворог спинився об руїну');
+    assert.ok(ev2.f.some((e) => e.type === 'leak'));
+  }
+
+  // Пастка сповільнює, прапор множить.
+  {
+    const a = createArmy({ weapons: WP, rows: 4, slotX: 1, holdX: 11.5, homeX: 2.5,
+      extraMul: (al, fo) => (fo.cls === 'armored' ? 1.5 : 1) });
+    const slow = foe({ x: 10, speed: 2 });
+    const fast = foe({ x: 10, speed: 2, row: 1 });
+    run(a, [slow, fast], 1, 0.05, { slowAt: (row, x) => (row === 0 ? 0.5 : 1) });
+    near(10 - slow.x, (10 - fast.x) / 2, 1e-6);
+    const s = a.summon('sword', 0, 1).ally;
+    const h = a.hitOf(s, foe({ cls: 'armored' }));
+    near(h.amount, s.damage * counterMul(WP.counters, 'balanced', 'armored') * 1.5);
+    assert.ok(h.bonus, 'прапор мав дати бонус');
+  }
+
+  // Кузня: +1 рівень рідкості, але не вище стелі.
+  {
+    const a = mk();
+    const r0 = a.summon('sword', 0, 0.6).ally;       // rare
+    const r1 = a.summon('sword', 0, 0.6, 1).ally;    // rare + 1 = mythical
+    const top = a.summon('sword', 0, 1, 5).ally;     // legendary + 5 = legendary
+    assert.equal(r0.rarity.id, 'rare');
+    assert.equal(r1.rarity.id, 'mythical', 'кузня не підняла рівень');
+    assert.equal(top.rarity.id, 'legendary', 'кузня пробила стелю рідкості');
+    assert.ok(r1.damage > r0.damage);
+  }
+
+  // Протікання: ворог без опору доходить до лінії дому.
+  {
+    const a = mk();
+    const f = foe({ x: 1.0, speed: 2 });
+    const ev = run(a, [f], 0.3);
+    assert.ok(ev.f.some((e) => e.type === 'leak'), 'ворог без опору не протік');
+  }
+}
+
+// --- lane mode: село ---------------------------------------------------------
+// Колодязь, що робить другу краплю поверх першої; прапор, що бафає чужий ряд;
+// кузня, яка не перезаряджається — усе це тихо, і все це тут.
+{
+  const mkTown = () => createTown({
+    data: BD, rarity: WP.rarity, rows: 4, cols: 3, plotX: (c) => 3 + c * 2, plotHalf: 0.8,
+  });
+
+  // Фундамент: один на будівлю, межі, рідкість множить hp.
+  {
+    const t = mkTown();
+    const r = t.build('well', 0, 0, 1);
+    assert.ok(r.ok);
+    near(r.building.x, 3);
+    assert.equal(t.build('well', 0, 0, 1).reason, 'фундамент зайнятий');
+    assert.equal(t.build('well', 0, 3, 1).reason, 'немає такого фундаменту');
+    assert.equal(t.build('well', 4, 0, 1).reason, 'немає такого ряду');
+    assert.equal(t.build('нема', 0, 1, 1).reason, 'немає такої будівлі');
+    assert.equal(t.at(0, 0), r.building);
+    assert.equal(t.at(0, 1), null);
+    const poor = mkTown().build('barricade', 0, 0, 0).building;
+    const fine = mkTown().build('barricade', 0, 0, 1).building;
+    assert.ok(fine.maxHp > poor.maxHp, 'рідкість не додала hp');
+    assert.equal(t.buildings.length, 1);
+  }
+
+  // Колодязь: крапля через every, друга не робиться, поки першу не тапнули.
+  {
+    const t = mkTown();
+    const w = t.build('well', 1, 0, 1).building;
+    const every = BD.buildings.well.effect.every;
+    let drops = 0;
+    for (let s = 0; s < every * 3; s += 0.1) drops += t.tick(0.1, []).filter((e) => e.type === 'drop').length;
+    assert.equal(drops, 1, `за три періоди без тапу мало бути рівно одна крапля, а є ${drops}`);
+    assert.equal(t.collect(w) > 0, true, 'краплю не віддали');
+    assert.equal(t.collect(w), 0, 'ту саму краплю віддали двічі');
+    drops = 0;
+    for (let s = 0; s < every + 0.2; s += 0.1) drops += t.tick(0.1, []).filter((e) => e.type === 'drop').length;
+    assert.equal(drops, 1, 'після тапу колодязь не запрацював знову');
+    // Легендарний колодязь дає більше.
+    const gold = mkTown().build('well', 0, 0, 1).building;
+    const gray = mkTown().build('well', 0, 0, 0).building;
+    gold.ready = gray.ready = true;
+    assert.ok(mkTown().collect(gold) === 0 || true); // collect працює по стану, не по місту
+    const tg = mkTown(); const g1 = tg.build('well', 0, 0, 1).building; g1.ready = true;
+    const tb = mkTown(); const g0 = tb.build('well', 0, 0, 0).building; g0.ready = true;
+    assert.ok(tg.collect(g1) > tb.collect(g0), 'рідкість колодязя не впливає на чорнило');
+  }
+
+  // Прапор — свій ряд і свій клас; пастка — свій ряд і своя околиця.
+  {
+    const t = mkTown();
+    t.build('banner_armor', 2, 1, 1);
+    assert.ok(t.dmgMul(2, 'armored') > 1, 'прапор не бафає');
+    assert.equal(t.dmgMul(2, 'swift'), 1, 'прапор бафає не той клас');
+    assert.equal(t.dmgMul(1, 'armored'), 1, 'прапор бафає чужий ряд');
+    t.build('trap', 3, 2, 1);
+    const tx = 3 + 2 * 2;
+    assert.ok(t.slowAt(3, tx) < 1, 'пастка не сповільнює');
+    assert.ok(t.slowAt(3, tx + 0.5) < 1);
+    assert.equal(t.slowAt(3, tx + 5), 1, 'пастка діє через усе поле');
+    assert.equal(t.slowAt(2, tx), 1, 'пастка діє на чужий ряд');
+  }
+
+  // Кузня: заряд є одразу, витрачається, перезаряджається; чужий ряд — нуль.
+  {
+    const t = mkTown();
+    t.build('forge', 0, 0, 1);
+    assert.equal(t.takeForge(1), 0, 'кузня дала заряд чужому ряду');
+    assert.equal(t.takeForge(0), BD.buildings.forge.effect.tiers);
+    assert.equal(t.takeForge(0), 0, 'заряд видали двічі');
+    for (let s = 0; s < BD.buildings.forge.effect.recharge + 0.2; s += 0.1) t.tick(0.1, []);
+    assert.equal(t.takeForge(0), BD.buildings.forge.effect.tiers, 'кузня не перезарядилась');
+  }
+
+  // Каплиця лікує лише поранених свого ряду в засягу, не вище максимуму.
+  {
+    const t = mkTown();
+    const c = t.build('chapel', 0, 1, 1).building;
+    const hurt = { row: 0, x: c.x + 1, hp: 10, maxHp: 30 };
+    const far = { row: 0, x: c.x + 20, hp: 10, maxHp: 30 };
+    const other = { row: 1, x: c.x, hp: 10, maxHp: 30 };
+    const full = { row: 0, x: c.x, hp: 30, maxHp: 30 };
+    let heals = 0;
+    for (let s = 0; s < BD.buildings.chapel.effect.every * 2.5; s += 0.1) {
+      heals += t.tick(0.1, [hurt, far, other, full]).filter((e) => e.type === 'heal').length;
+    }
+    assert.ok(heals >= 2, 'каплиця не лікує');
+    assert.ok(hurt.hp > 10 && hurt.hp <= 30);
+    assert.equal(far.hp, 10, 'лікує поза засягом');
+    assert.equal(other.hp, 10, 'лікує чужий ряд');
+    assert.equal(full.hp, 30);
+  }
+
+  // Руйнування: прибирає зі списку, фундамент звільняється.
+  {
+    const t = mkTown();
+    const b = t.build('barricade', 0, 0, 1).building;
+    assert.equal(t.damage(b, 1), false);
+    assert.equal(t.damage(b, 1e6), true);
+    assert.equal(t.at(0, 0), null, 'руїна зайняла фундамент');
+    assert.ok(t.build('well', 0, 0, 1).ok, 'на місці руїни не будується');
+  }
 }
 
 console.log('selfcheck: ok');

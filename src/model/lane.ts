@@ -1,4 +1,4 @@
-// Геометрія рядів: єдине, що про них треба знати і руху ворогів, і панелі загону.
+// Геометрія рядів: єдине, що про них треба знати і руху ворогів, і панелі слотів.
 //
 // Без Pixi й без Layout: сюди приходить смуга в клітинках, звідси виходять
 // числа. Тому ганяється з node — і це саме та математика, яку легко зламати
@@ -7,8 +7,8 @@
 //
 // Координати — клітинки світу, вісь y вниз, як усюди в грі.
 
-import type { AllyKind, AllyStats } from './squad.js';
-import type { Vec2, Wave } from '../types.js';
+import type { Wave } from '../types.js';
+import type { EnemyClass, WeaponKind } from './weapons.js';
 
 /** Смуга, поділена на рівні ряди. */
 export interface Band {
@@ -40,12 +40,29 @@ export function rowOf(b: Band, y: number): number {
   return Math.min(Math.max(r, 0), b.rows - 1);
 }
 
+/**
+ * Зважений випадковий вибір із `mix` хвилі.
+ * @param r число в [0, 1) — зовні, щоб тест був детермінованим
+ */
+export function pickWeighted(mix: Record<string, number>, r: number): string {
+  const entries = Object.entries(mix).filter(([, w]) => w > 0);
+  const total = entries.reduce((a, [, w]) => a + w, 0);
+  let acc = 0;
+  for (const [id, w] of entries) {
+    acc += w / total;
+    if (r < acc) return id;
+  }
+  return entries[entries.length - 1]?.[0] ?? '';
+}
+
 // --- data/laneLevel.json ----------------------------------------------------
 
-/** Хвиля режиму: та сама форма, що в level.json, плюс ряд. */
+/** Хвиля режиму: та сама форма, що в level.json, плюс ряд і суміш ворогів. */
 export interface LaneWave extends Wave {
   /** номер ряду; null або відсутнє — випадковий */
   row?: number | null;
+  /** ваги вибору ворога на кожен спавн; ключі з laneEnemies.json */
+  mix: Record<string, number>;
 }
 
 export interface LaneLevel {
@@ -55,32 +72,47 @@ export interface LaneLevel {
   lives: number;
   band: { y0: number; y1: number };
   rows: number;
-  /** вежа стоїть на всіх рядах одразу, тому в неї лише x */
-  towerX: number;
-  /** своя база вежі: towerparts.base задана під лабіринт і тут не діставала */
-  towerBase?: { rate?: number; range?: number };
+  /** лінія дому: ворог дійшов — мінус життя */
+  homeX: number;
+  /** слот виклику в кожному ряду */
+  slot: { x0: number; x1: number };
+  /** лінія фронту: союзник без цілі тримає її */
+  holdX: number;
+  /** на скільки позаду фронту тримається священик без бійців */
+  supportBack?: number;
   spawnX: number;
-  squad: { cols: number; xLeft: number; xRight: number };
+  /** одноразовий захист лінії дому, зарядів на ряд */
+  laser?: { charges: number };
+  /** фундаменти будівель: cols стовпчиків від x0 з кроком step, квадрат side */
+  plots: { x0: number; cols: number; step: number; side: number };
+  /** множник часу бою, поки відкрита рамка обведення */
+  slowWhileDrawing?: number;
+  /** зброя, відкрита від початку */
+  startWeapons: string[];
+  /** винагороди за хвилі: на початку хвилі wave відкриваються weapons */
+  unlocks: { wave: number; weapons: string[] }[];
+  startBuildings: string[];
+  buildingUnlocks: { wave: number; buildings: string[] }[];
   waveBreak?: number;
   waves: LaneWave[];
 }
 
-// --- data/allies.json -------------------------------------------------------
+// --- data/laneEnemies.json --------------------------------------------------
 
-/** Силует союзника: те саме, що TowerPart, тільки без сокетів і тегів. */
-export interface AllyDef {
+export interface LaneEnemyDef {
   _?: string;
-  /** у клітинках */
-  size: Vec2;
-  cost: number;
-  stats: AllyStats;
-  /** штрихи в 0..1 коробки: одне джерело і для обведення, і для випікання */
-  outline: Vec2[][];
-  /** Якою ручкою малювати випечений силует (ключ look.pens). У мілі й ренжа
-   *  різні: обведення в гравця своє, але тип юніта в бою читається кольором. */
-  pen?: string;
+  rig: string;
+  cls: EnemyClass;
+  /** зріст у клітинках — для закреслення й цифр */
+  size: number;
+  hp: number;
+  speed: number;
+  damage: number;
+  rate: number;
+  reach: number;
+  /** власний бонус проти роду союзника */
+  vs?: Partial<Record<WeaponKind, number>>;
 }
 
-/** Ключі збігаються з AllyKind, тому пошук прямий. Службові `_*` відсіює код,
- *  як і в parts.json — у типі їх немає. */
-export type Allies = Record<AllyKind, AllyDef>;
+/** Службові `_*` відсіює код, як і в parts.json — у типі їх немає. */
+export type LaneEnemies = Record<string, LaneEnemyDef>;

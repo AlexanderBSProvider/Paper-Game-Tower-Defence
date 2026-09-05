@@ -40,7 +40,9 @@
     "red": "#c0392b",
     "green": "#2e7d5b",
     "marker": "#ffe066",
-    "pencil": "#5a5a5a"
+    "pencil": "#5a5a5a",
+    "purple": "#7b3fa0",
+    "orange": "#e0761a"
   },
 
   "boil": { "amplitude": 1.8, "fps": 12 },

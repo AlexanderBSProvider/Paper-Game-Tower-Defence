@@ -9,7 +9,8 @@
         "part": "earling/body", "pos": [0, 0.2], "pivot": [0.5, 1.0], "pen": "red",
         "mods": [
           { "type": "squash", "amp": 0.055, "freq": 1.15 },
-          { "type": "bob", "amp": 0.045, "freq": 1.15 }
+          { "type": "bob", "amp": 0.045, "freq": 1.15 },
+          { "type": "recoil", "amp": 0.28, "dir": [-1, 0] }
         ]
       },
       {
@@ -75,6 +76,51 @@
       {
         "part": "keep/flag", "parent": 0, "pos": [-0.95, -1.68], "pivot": [0.12, 1.0], "pen": "green",
         "mods": [{ "type": "sway", "amp": 9, "freq": 0.8 }]
+      }
+    ]
+  },
+
+  "_lane": "Нижче — вороги режиму lane. recoil на тілі — випад на атаці: fire('attack') ворогам кличе лише lane, тому в лабіринті ці модифікатори сплять.",
+  "runner": {
+    "hitbox": [1.1, 1.1],
+    "anchors": { "hit": [0, -0.55], "ground": [0, 0.45] },
+    "parts": [
+      {
+        "part": "runner/body", "pos": [0, 0.2], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.08, "freq": 2.3 },
+          { "type": "bob", "amp": 0.07, "freq": 2.3 },
+          { "type": "recoil", "amp": 0.22, "dir": [-1, 0] }
+        ]
+      },
+      {
+        "part": "runner/head", "parent": 0, "pos": [0, -0.62], "pivot": [0.5, 0.92], "pen": "red",
+        "mods": [
+          { "type": "sway", "amp": 9, "freq": 1.1 },
+          { "type": "bob", "amp": 0.04, "freq": 2.3, "phase": 0.2 }
+        ]
+      }
+    ]
+  },
+
+  "brute": {
+    "hitbox": [1.9, 1.9],
+    "anchors": { "hit": [0, -1.0], "ground": [0, 0.75] },
+    "parts": [
+      {
+        "part": "brute/body", "pos": [0, 0.3], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.03, "freq": 0.6 },
+          { "type": "bob", "amp": 0.025, "freq": 0.6 },
+          { "type": "recoil", "amp": 0.32, "dir": [-1, 0] }
+        ]
+      },
+      {
+        "part": "brute/head", "parent": 0, "pos": [-0.15, -1.15], "pivot": [0.5, 0.9], "pen": "red",
+        "mods": [
+          { "type": "sway", "amp": 3, "freq": 0.3 },
+          { "type": "bob", "amp": 0.02, "freq": 0.6, "phase": 0.3 }
+        ]
       }
     ]
   },

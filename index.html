@@ -8,6 +8,63 @@
   html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#1b1917; }
   body { touch-action:none; -webkit-tap-highlight-color:transparent; }
   #app canvas { display:block; }
+
+  /* Інструкція режиму lane: записка поверх канваса. Перо в грі літер не вміє,
+     тому текст — DOM. Показує main.ts лише з ?mode=lane. */
+  #howto {
+    position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    background:rgba(42,36,24,0.35); z-index:10; cursor:pointer; padding:16px; box-sizing:border-box;
+  }
+  #howto[hidden] { display:none; }
+  #howto .note {
+    max-width:460px; width:100%; background:#f6f2e7; color:#2b3a8f;
+    font:16px/1.45 "Segoe Print","Bradley Hand","Comic Sans MS",cursive;
+    padding:18px 22px; border:1.5px solid #5a5a5a; box-shadow:4px 5px 0 rgba(42,36,24,0.22);
+    background-image:linear-gradient(rgba(167,186,214,0.35) 1px, transparent 1px);
+    background-size:100% 23px;
+  }
+  #howto h1 { font-size:20px; margin:0 0 10px; color:#2b3a8f; }
+  #howto p { margin:0 0 8px; }
+  #howto b { color:#c0392b; font-weight:600; }
+  #howto .rps { color:#5a5a5a; }
+  #howto .star { letter-spacing:1px; }
+  #howto .s1 { color:#8a8a8a; } #howto .s2 { color:#2b3a8f; } #howto .s3 { color:#7b3fa0; } #howto .s4 { color:#e0761a; }
+  #howto .tap { margin-top:12px; color:#2e7d5b; font-size:14px; }
+
+  /* Полиця трафаретів ліворуч від рамки обведення: DOM, бо перо літер не вміє. */
+  #shelf {
+    position:fixed; z-index:9; display:flex; flex-direction:column; gap:5px;
+    overflow-y:auto; box-sizing:border-box; padding:4px;
+    background:rgba(246,242,231,0.92); border:1.5px solid #5a5a5a;
+    box-shadow:4px 5px 0 rgba(42,36,24,0.22);
+    font:12px/1.2 "Segoe Print","Bradley Hand","Comic Sans MS",cursive; color:#2b3a8f;
+    scrollbar-width:thin;
+  }
+  #shelf[hidden] { display:none; }
+  #shelf .card {
+    display:flex; align-items:center; gap:6px; width:100%; text-align:left;
+    background:#f6f2e7; color:#2b3a8f; border:1.5px solid #8f8875; border-radius:3px;
+    padding:4px 6px; cursor:pointer; font:inherit; touch-action:manipulation;
+  }
+  #shelf .card svg { width:40px; height:40px; flex:none; color:#2b3a8f; }
+  #shelf .card .txt { flex:1; min-width:0; }
+  #shelf .card .title { font-weight:600; font-size:13px; }
+  #shelf .card .hint { color:#5a5a5a; font-size:11px; }
+  #shelf .card .cost { flex:none; color:#2e7d5b; font-weight:600; font-size:14px; }
+  #shelf .card.picked { border-color:#2b3a8f; box-shadow:inset 0 0 0 3px #ffe066; background:#fff9d6; }
+  #shelf .card.locked { opacity:0.45; cursor:default; }
+  #shelf .card.locked svg { color:#5a5a5a; }
+  #shelf .card.poor .cost { color:#5a5a5a; text-decoration:line-through; }
+  #shelf .card.poor:not(.locked) { opacity:0.7; }
+  #shelf .shelf-gap { height:1px; background:#8f8875; margin:2px 8px; flex:none; }
+  #shelf .shelf-head { flex:none; font-size:11px; color:#5a5a5a; padding:2px 4px 4px; border-bottom:1px dashed #8f8875; }
+  #shelf .card .hint.when { color:#c0392b; }
+  #shelf .card.locked .cost { visibility:hidden; }
+  @media (max-height: 480px) {
+    #shelf .card .hint { display:none; }
+    #shelf .card svg { width:28px; height:28px; }
+    #shelf .card { padding:2px 5px; }
+  }
 </style>
 <!--
   Платформний SDK підключається одним тегом; src/sdk.js сам визначає, який завантажено.
@@ -18,6 +75,29 @@
 </head>
 <body>
 <div id="app"></div>
+<div id="howto" hidden>
+  <div class="note">
+    <h1>Обведи зброю — і в бій</h1>
+    <p><b>Тапни слот зліва</b> → обери зброю на полиці → обведи її. Юніт іде сам.
+      Поки малюєш, час майже стоїть.</p>
+    <p><b>Тапни квадрат за червоною лінією</b> → обери будівлю → обведи. Колодязь дає
+      краплю чорнила: <b>тапни краплю</b>, щоб забрати. Чорнило тільки з колодязів.
+      Вороги, що пройшли повз бійців, ламають будівлі.</p>
+    <p>Точніше обвів — рідкіша зброя:
+      <span class="star s1">★</span> звичайна ·
+      <span class="star s2">★★</span> рідкісна ·
+      <span class="star s3">★★★</span> міфічна ·
+      <span class="star s4">★★★★</span> легендарна.</p>
+    <p class="rps"><b>Камінь · ножиці · папір.</b>
+      Булава й арбалет ламають <b>броню здорованя</b> (×2), але ледь чіпають бігуна.
+      Спис і праща ріжуть <b>бігуна</b> (×2), але ламаються об броню.
+      Меч і лук — проти звичайних. Бігун добігає до стрільців, здоровань ламає бійців.
+      Священик лікує тих, хто поруч.</p>
+    <p>Ворог дійшов до <b>червоної лінії</b> — лазер ряду спалює всіх у ряду, але лише раз.
+      Далі кожен прорив — мінус життя. Нова зброя й будівлі відкриваються за хвилі.</p>
+    <p class="tap">тапни, щоб почати</p>
+  </div>
+</div>
 <script type="module" src="./dist/main.js"></script>
 </body>
 </html>

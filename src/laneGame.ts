@@ -1,44 +1,48 @@
-// Хаб режиму lane: одна вежа зліва, вороги йдуть справа наліво по рядах.
+// Хаб режиму lane: чотири ряди, зліва слоти виклику, за лінією дому — село,
+// справа спавн.
 //
-// Ні сітки, ні BFS, ні лабіринту: маршрут — це пряма, тому рух ворога — один
-// рядок `e.x -= step`. Усе, що складне в grid.ts/flow.ts, тут просто не існує.
+// Ні сітки, ні BFS, ні вежі. Гравець обводить ЗБРОЮ по трафарету — з неї
+// збирається юніт (тіло малює код, зброю — рука), і він іде в бій сам: до лінії
+// фронту, а далі — до найближчого ворога свого ряду. Ворог іде назустріч,
+// спиняється перед першим, хто на дорозі — бійцем або будівлею, — і б'є.
+// Дійшов до лінії дому — лазер ряду (раз), потім мінус життя.
 //
-// combat.ts береться БЕЗ ЄДИНОЇ ЗМІНИ. Він не знає про сітку — питає лише
-// `distOf(e)`, наскільки ворог просунувся. У лабіринті це поле відстаней,
-// а тут просто `e.x`: чим менший, тим ближче до вежі. Через це вежа сама
-// собою бере найнебезпечнішу ціль, а комбо, рикошет і сплеш працюють задарма.
+// Село — три фундаменти в кожному ряду одразу за лінією дому, тобто НА ШЛЯХУ
+// ворогів. Будівлі теж обводяться. Чорнило дає лише колодязь, і краплю треба
+// тапнути — з ворогів нічого не падає.
 //
-// Координати — клітинки світу, як усюди. Своє ядро (laneLevel.core), бо
-// look.core 15x26 задане під портретний лабіринт, а тут світ лежить навпаки.
+// Хто куди йде і хто кого б'є — вирішують model/units.ts і model/buildings.ts
+// і віддають події; тут лише малюнок: риги, снаряди, цифри, закреслення,
+// краплі. Через це весь бій ганяється селфчеком без браузера, а цей файл —
+// ні, і він про це знає.
 
 import { Container, Graphics, Renderer, Texture } from '../lib/pixi.min.mjs';
-import { penStroke } from './view/ink.js';
+import { penStroke, penStar, penCircle, hatch } from './view/ink.js';
 import { buildRig } from './view/rig.js';
 import { bakeTrace } from './view/procart.js';
+import { createLaneFx } from './view/laneFx.js';
 import { createWallet } from './model/economy.js';
-import { createCombat } from './combat.js';
-import { createKeep } from './model/keep.js';
-import { rowY, rowHeight } from './model/lane.js';
-import { createSquad } from './model/squad.js';
-import type { Allies, Band, LaneLevel } from './model/lane.js';
-import type { Ally, AllyKind, Squad } from './model/squad.js';
-import type { DefKind, Defender, Keep, KeepData } from './model/keep.js';
-import type { Combat } from './combat.js';
+import { rowY, rowHeight, rowOf, pickWeighted } from './model/lane.js';
+import { createArmy } from './model/units.js';
+import { createTown } from './model/buildings.js';
+import { unlockedAt } from './model/weapons.js';
+import type { Band, LaneEnemies, LaneEnemyDef, LaneLevel } from './model/lane.js';
+import type { Ally, Army, Foe } from './model/units.js';
+import type { Building, BuildingsData, Town } from './model/buildings.js';
+import type { Rarity, WeaponKind, WeaponsData } from './model/weapons.js';
 import type { Wallet } from './model/economy.js';
-import type {
-  Balance, Enemy, Fx, Layout, Look, Mod, Parts, Rig, RigDef, RigDefs, Vec2,
-} from './types.js';
+import type { Balance, Layout, Look, Mod, Parts, Rig, RigDef, RigDefs, Vec2 } from './types.js';
 
-/** Ворог у режимі: той самий Enemy, плюс ряд. combat.ts приймає Enemy[], і
- *  LaneEnemy[] під нього підходить — саме тому combat не довелося чіпати. */
-export interface LaneEnemy extends Enemy {
-  row: number;
+/** Ворог у режимі: те, що бачить модель (Foe), плюс риг і дані. */
+export interface LaneEnemy extends Foe {
+  id: number;
+  def: LaneEnemyDef;
+  rig: Rig;
+  y: number;
 }
 
 export type Phase = 'break' | 'wave' | 'won' | 'lost';
 
-/** Свій стан, а не GameState із game.ts: там є `sealed` — питання, чи
- *  замкнули лабіринт, якого тут не буває. */
 export interface LaneState {
   lives: number;
   maxLives: number;
@@ -53,97 +57,103 @@ export interface LaneState {
 
 export interface LaneGameOpts {
   world: Container;
-  /** потрібен, щоб пекти обведене гравцем у текстуру союзника на рантаймі */
+  /** потрібен, щоб пекти обведене в текстуру на рантаймі */
   renderer: Renderer;
   look: Look;
   level: LaneLevel;
-  allies: Allies;
+  weapons: WeaponsData;
+  buildings: BuildingsData;
+  enemyDefs: LaneEnemies;
   balance: Balance;
   rigDefs: RigDefs;
   parts: Parts;
   textures: Map<string, Texture>;
   layout: Layout;
-  keepData: KeepData;
 }
 
-export type AddAllyOutcome =
-  | { ok: true; ally: Ally; spent: number }
+export type SummonOutcome =
+  | { ok: true; ally: Ally; rarity: Rarity; spent: number }
   | { ok: false; reason: string };
 
-export type PlaceResult =
-  | { ok: true; floor: number; spent: number; defender: Defender }
+export type BuildOutcome =
+  | { ok: true; building: Building; spent: number }
   | { ok: false; reason: string };
 
-export type LevelResult = PlaceResult;
-
-export type GrowResult =
-  | { ok: true; level: number; spent: number }
-  | { ok: false; reason: string };
+export interface Unlock {
+  id: string;
+  kind: 'weapon' | 'building';
+}
 
 export interface LaneGame {
   state: LaneState;
   wallet: Wallet;
   enemies: LaneEnemy[];
-  combat: Combat;
+  army: Army;
+  town: Town;
   band: Band;
-  /** Вежа: рівень, гілка, поверхи й хто в них сидить. */
-  keep: Keep;
-  towerX: number;
-  towerY: number;
+  level: LaneLevel;
+  /** де з'являється союзник у ряду */
+  readonly slotX: number;
   spawnEnemy(row?: number | null, typeId?: string, hpMul?: number): LaneEnemy;
-  damage(e: Enemy, amount: number): boolean;
-
-  /** Центр поверху в клітинках світу. Нульовий поверх — нижній. */
-  floorY(floor: number): number;
-  /** Висота одного поверху в клітинках. */
-  floorH(): number;
   /**
-   * Намалювати захисника в поверх.
-   * @param outline штрихи з рамки; без них береться контур із даних, тому
-   *   виклик із консолі теж працює й дає ідеальний силует
+   * Намалювати союзника в ряд: зброя обведена, юніт зібраний, пішов.
+   * @param strokes штрихи з рамки; без них береться контур із даних, тому
+   *   виклик із консолі (`__td.laneGame.summon('sword', 1, 1)`) теж працює
    */
-  placeDefender(
-    floor: number, kind: DefKind, quality?: number, outline?: Vec2[][],
-  ): PlaceResult;
-  /** Підняти рівень захисника — головна витрата чорнила. */
-  levelDefender(floor: number): LevelResult;
-  /** Рівень вежі: +поверх, +життя. */
-  growKeep(): GrowResult;
-  /** Розвилка гілки, один раз на партію. */
-  pickBranch(id: string): GrowResult;
-
-  /**
-   * Півширина вежі в клітинках світу: зона, що належить вежі, а не полю.
-   * Одне джерело для панелі апгрейду й для загону.
-   */
-  readonly towerReach: number;
-  /** Загін перед вежею: мілі тримають рух, ренжові стріляють через combat. */
-  squad: Squad;
-  /**
-   * Намалювати союзника в ряд. Повний ряд виштовхує найслабшого.
-   * @param outline штрихи з рамки обведення; без них береться контур із даних
-   */
-  addAlly(
-    kind: AllyKind, row: number, quality?: number, outline?: Vec2[][],
-  ): AddAllyOutcome;
+  summon(weaponId: string, row: number, quality?: number, strokes?: Vec2[][]): SummonOutcome;
+  /** Поставити будівлю на фундамент (row, col). */
+  build(kind: string, row: number, col: number, quality?: number, strokes?: Vec2[][]): BuildOutcome;
+  /** Який фундамент під точкою світу, або null. */
+  plotAt(cx: number, cy: number): { row: number; col: number } | null;
+  plotCenter(row: number, col: number): Vec2;
+  /** Тап по краплі над колодязем: забрати. @returns чи була крапля під пальцем */
+  collectAt(cx: number, cy: number): boolean;
+  /** Підсвітити слоти маркером: є що намалювати, є куди тапати. */
+  setSlotsActive(on: boolean): void;
+  /** Те саме для фундаментів. */
+  setPlotsActive(on: boolean): void;
+  /** Підсвітити ряд, для якого зараз малюють (null — ніякий). */
+  setFocusRow(row: number | null): void;
+  isUnlocked(id: string): boolean;
+  isBuildingUnlocked(id: string): boolean;
+  /** Відкрите від останнього виклику: HUD показує винагороду й спорожняє чергу. */
+  takeUnlocks(): Unlock[];
+  /** Куди летять краплі чорнила — центр колби в ЕКРАННИХ px; ставить HUD. */
+  setGauge(at: () => Vec2): void;
+  readonly lasers: readonly number[];
   update(dtMs: number): void;
   rescale(s: number): void;
   resize(): void;
 }
 
-/** Вежа в combat під фіксованим id: вона тут одна й назавжди. Союзники
- *  пізніше візьмуть id від 1, тому нуль лишається за нею. */
-const TOWER_ID = 0;
+/** Снаряд ренжового: летить по ряду вправо, поки не дожене ціль. */
+interface Shot {
+  g: Graphics;
+  x: number;
+  y: number;
+  speed: number;
+  ally: Ally;
+  target: LaneEnemy;
+}
+
+/** Малюнок будівлі: риг, власна текстура, рисочки hp і крапля над колодязем. */
+interface BuildingArt {
+  rig: Rig;
+  tex: Texture;
+  hpG: Graphics;
+  drop: Graphics | null;
+  /** блимання «готово» в кузні */
+  readyG: Graphics | null;
+  t: number;
+}
 
 export function createLaneGame({
-  world, renderer, look, level, allies, balance, rigDefs, parts, textures, layout,
-  keepData,
+  world, renderer, look, level, weapons, buildings, enemyDefs, balance, rigDefs, parts, textures, layout,
 }: LaneGameOpts): LaneGame {
   const band: Band = { y0: level.band.y0, y1: level.band.y1, rows: level.rows };
-  const towerX = level.towerX;
-  // Вежа стоїть на всіх рядах одразу — вона висока, тому її місце по центру
-  // смуги, і пропущений ворог у будь-якому ряду доходить саме до неї.
-  const towerY = (band.y0 + band.y1) / 2;
+  const slotX = (level.slot.x0 + level.slot.x1) / 2;
+  const plots = level.plots;
+  const plotX = (col: number) => plots.x0 + plots.step * col;
 
   const wallet = createWallet({
     start: balance.economy.startInk,
@@ -151,23 +161,15 @@ export function createLaneGame({
     refund: balance.economy.refund,
   });
 
-  const laneG = new Graphics();   // розмітка рядів
-  const fxLayer = new Container();
+  const laneG = new Graphics();   // розмітка: ряди, дім, фронт, слоти, фундаменти
+  const glowG = new Graphics();   // маркерна підсвітка слотів, фундаментів, ряду
+  const laserG = new Graphics();  // випромінювачі лазера на лінії дому
   const units = new Container();  // усі, хто стоїть на землі: сортуються за y
   const shotLayer = new Container();
-  world.addChild(laneG, fxLayer, units, shotLayer);
+  world.addChild(laneG, glowG, laserG, units, shotLayer);
 
+  const fx = createLaneFx(shotLayer, look);
   const rigs: Rig[] = [];
-  /**
-   * Риги, які НЕ масштабуються spriteScale: корпус вежі й ті, хто в її поверхах.
-   *
-   * Дрібна клітинка робить фігури більшими за їхній хітбокс, щоб морди читались.
-   * Для вежі це неприпустимо: кімнати мусять лягати на смугу рядів рівно, бо
-   * поверх стріляє з тієї y, на якій намальований, а combat міряє відстань
-   * двовимірно. Роздутий на 1.8 корпус з'їхав би відносно ряду, у який б'є.
-   */
-  const fixed: Rig[] = [];
-  const fx: Fx[] = [];
 
   function mount(rig: Rig, x: number, y: number) {
     rig.view.position.set(x, y);
@@ -177,34 +179,148 @@ export function createLaneGame({
     return rig;
   }
 
-  const place = (rigId: string, x: number, y: number) =>
-    mount(buildRig(rigDefs[rigId], textures, parts, look), x, y);
-
   function unplace(rig: Rig) {
     rig.view.destroy({ children: true });
     rigs.splice(rigs.indexOf(rig), 1);
   }
 
-  // --- розмітка рядів --------------------------------------------------------
-  /** Ряди накреслені олівцем: без них поле читається як одна каша, а гравцю
-   *  треба бачити, у який саме ряд він ставитиме союзника. */
+  // --- розмітка ---------------------------------------------------------------
+  const pencil = {
+    color: look.pens.pencil, width: 0.03, alpha: 0.28, halo: 0,
+    jitter: 0.05, step: 1.4, overshoot: 0,
+  };
+
+  /** Пунктирний прямокутник: рамка слота й фундаменту. */
+  function dashedRect(g: Graphics, x0: number, y0: number, x1: number, y1: number, color: string | number, alpha: number) {
+    const side = (a: Vec2, b: Vec2) => {
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const n = Math.max(2, Math.round(len / 0.32));
+      for (let i = 0; i < n; i += 2) {
+        const t0 = i / n, t1 = Math.min(1, (i + 1) / n);
+        penStroke(g, [
+          [a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0],
+          [a[0] + (b[0] - a[0]) * t1, a[1] + (b[1] - a[1]) * t1],
+        ], { ...pencil, color, width: 0.04, alpha, step: 0.4 });
+      }
+    };
+    side([x0, y0], [x1, y0]);
+    side([x1, y0], [x1, y1]);
+    side([x1, y1], [x0, y1]);
+    side([x0, y1], [x0, y0]);
+  }
+
+  /**
+   * Поле має читатись без слів: зліва слоти з плюсиком, лінія дому кольором
+   * поля зошита, за нею три фундаменти з молоточком у кожному ряду,
+   * посередині бліді рисочки фронту, ряди олівцем.
+   */
   function drawLanes() {
     laneG.clear();
     const x0 = 0, x1 = level.core.cols;
     const h = rowHeight(band);
 
     for (let r = 1; r < band.rows; r++) {
-      penStroke(laneG, [[x0, band.y0 + h * r], [x1, band.y0 + h * r]], {
-        color: look.pens.pencil, width: 0.03, alpha: 0.28, halo: 0,
-        jitter: 0.05, step: 1.4, overshoot: 0,
-      });
+      penStroke(laneG, [[x0, band.y0 + h * r], [x1, band.y0 + h * r]], pencil);
     }
-    // Межі смуги трохи твердіші: видно, де закінчується поле бою.
     for (const y of [band.y0, band.y1]) {
-      penStroke(laneG, [[x0, y], [x1, y]], {
-        color: look.pens.pencil, width: 0.045, alpha: 0.5, halo: 0,
-        jitter: 0.05, step: 1.4, overshoot: 0,
-      });
+      penStroke(laneG, [[x0, y], [x1, y]], { ...pencil, width: 0.045, alpha: 0.5 });
+    }
+
+    // Лінія дому: вертикальна, кольором поля зошита.
+    penStroke(laneG, [[level.homeX, band.y0 - 0.4], [level.homeX, band.y1 + 0.4]], {
+      color: look.margin.color, width: 0.07, alpha: 0.75, halo: 0.1,
+      jitter: 0.04, step: 0.8, overshoot: 0.1,
+    });
+
+    // Лінія фронту: рисочки, а не суцільна — це межа, а не стіна.
+    for (let y = band.y0 + 0.2; y < band.y1; y += 0.6) {
+      penStroke(laneG, [[level.holdX, y], [level.holdX, y + 0.28]], { ...pencil, width: 0.04, alpha: 0.32 });
+    }
+
+    for (let r = 0; r < band.rows; r++) {
+      const cy = rowY(band, r);
+      // Слот юніта: пунктир і плюсик.
+      dashedRect(laneG, level.slot.x0, cy - h * 0.42, level.slot.x1, cy + h * 0.42, look.pens.blue, 0.45);
+      const sx = slotX;
+      penStroke(laneG, [[sx - 0.18, cy], [sx + 0.18, cy]], { ...pencil, color: look.pens.blue, alpha: 0.4, width: 0.04 });
+      penStroke(laneG, [[sx, cy - 0.18], [sx, cy + 0.18]], { ...pencil, color: look.pens.blue, alpha: 0.4, width: 0.04 });
+
+      // Фундаменти: пунктир олівцем і молоточок, щоб читалось «тут будують».
+      for (let c = 0; c < plots.cols; c++) {
+        const px = plotX(c), half = plots.side / 2;
+        dashedRect(laneG, px - half, cy - half, px + half, cy + half, look.pens.pencil, 0.4);
+        const hp = { ...pencil, width: 0.045, alpha: 0.35, step: 0.3 };
+        penStroke(laneG, [[px - 0.22, cy + 0.22], [px + 0.12, cy - 0.12]], hp);
+        penStroke(laneG, [[px + 0.02, cy - 0.3], [px + 0.3, cy - 0.02], [px + 0.2, cy + 0.08], [px - 0.08, cy - 0.2], [px + 0.02, cy - 0.3]], hp);
+      }
+    }
+  }
+
+  let slotsActive = false, plotsActive = false, focusRow: number | null = null;
+  function drawGlow() {
+    glowG.clear();
+    const h = rowHeight(band);
+    if (focusRow != null) {
+      // Ряд, для якого зараз малюють: маркерна смуга на весь ряд.
+      glowG.rect(0, rowY(band, focusRow) - h / 2, level.core.cols, h)
+        .fill({ color: look.pens.marker, alpha: 0.12 });
+    }
+    for (let r = 0; r < band.rows; r++) {
+      const cy = rowY(band, r);
+      if (slotsActive) {
+        glowG.rect(level.slot.x0, cy - h * 0.42, level.slot.x1 - level.slot.x0, h * 0.84)
+          .fill({ color: look.pens.marker, alpha: 0.18 });
+      }
+      if (plotsActive) {
+        for (let c = 0; c < plots.cols; c++) {
+          if (town.at(r, c)) continue;
+          const px = plotX(c), half = plots.side / 2;
+          glowG.rect(px - half, cy - half, plots.side, plots.side)
+            .fill({ color: look.pens.marker, alpha: 0.12 });
+        }
+      }
+    }
+  }
+
+  /**
+   * Випромінювачі лазера на лінії дому — по одному на ряд, сидять НА лінії,
+   * дулом до ворогів. Прилад: коробка на ніжці, лінза праворуч, блискавка на
+   * боці, маркерне світло за лінзою, поки є заряд. Витрачений — без світла й
+   * блискавки, лінза закреслена, коробка олівцем: видно, що ряд без захисту.
+   */
+  function drawLasers() {
+    laserG.clear();
+    for (let r = 0; r < band.rows; r++) {
+      const cy = rowY(band, r);
+      const x = level.homeX;
+      const on = lasers[r] > 0;
+      const col = on ? look.pens.blue : look.pens.pencil;
+      const pen = {
+        color: col, width: 0.05, alpha: on ? 0.9 : 0.4,
+        jitter: 0.01, step: 0.2, overshoot: 0.03, halo: on ? 0.15 : 0,
+      };
+      if (on) {
+        // Світло за лінзою: маркерний конус у бік ворогів.
+        laserG.poly([x + 0.32, cy - 0.1, x + 1.1, cy - 0.34, x + 1.1, cy + 0.34, x + 0.32, cy + 0.1])
+          .fill({ color: look.pens.marker, alpha: 0.5 });
+        laserG.circle(x + 0.32, cy, 0.22).fill({ color: look.pens.marker, alpha: 0.7 });
+      }
+      // Ніжка й основа.
+      penStroke(laserG, [[x, cy + 0.32], [x, cy + 0.62]], pen);
+      penStroke(laserG, [[x - 0.28, cy + 0.62], [x + 0.28, cy + 0.62]], pen);
+      // Коробка приладу.
+      penStroke(laserG, [[x - 0.42, cy - 0.3], [x + 0.28, cy - 0.3], [x + 0.28, cy + 0.3], [x - 0.42, cy + 0.3], [x - 0.42, cy - 0.3]], pen);
+      // Лінза: кільце праворуч.
+      penCircle(laserG, x + 0.32, cy, 0.16, { ...pen, width: 0.055 });
+      if (on) {
+        // Блискавка на боці: «заряджено».
+        penStroke(laserG, [[x - 0.1, cy - 0.22], [x - 0.24, cy + 0.02], [x - 0.08, cy + 0.02], [x - 0.22, cy + 0.24]],
+          { ...pen, color: look.pens.orange ?? look.pens.red, width: 0.05, alpha: 0.95 });
+      } else {
+        // Витрачено: лінза закреслена червоним.
+        penStroke(laserG, [[x + 0.16, cy - 0.18], [x + 0.48, cy + 0.18]], { ...pen, color: look.pens.red, alpha: 0.7 });
+        penStroke(laserG, [[x + 0.48, cy - 0.18], [x + 0.16, cy + 0.18]], { ...pen, color: look.pens.red, alpha: 0.7 });
+      }
     }
   }
 
@@ -217,412 +333,372 @@ export function createLaneGame({
     spawned: 0, killed: 0, leaked: 0,
   };
   let spawnTimer = 0, waveLeft = 0;
+  let nextEnemyId = 1;
 
-  function despawn(e: LaneEnemy) {
-    unplace(e.rig);
-    enemies.splice(enemies.indexOf(e), 1);
+  /** Заряди лазера по рядах: як газонокосарки в PvZ, по одному на ряд. */
+  const lasers: number[] = Array.from({ length: band.rows }, () => level.laser?.charges ?? 0);
+
+  /** Відкрите: стартове плюс винагороди за пройдені хвилі. */
+  let unlocked = unlockedAt(0, level.startWeapons, level.unlocks);
+  let unlockedB = unlockedAt(0, level.startBuildings, level.buildingUnlocks, 'buildings');
+  const newUnlocks: Unlock[] = [];
+  function refreshUnlocks() {
+    const w = unlockedAt(state.wave, level.startWeapons, level.unlocks);
+    for (const id of w) if (!unlocked.has(id)) newUnlocks.push({ id, kind: 'weapon' });
+    unlocked = w;
+    const b = unlockedAt(state.wave, level.startBuildings, level.buildingUnlocks, 'buildings');
+    for (const id of b) if (!unlockedB.has(id)) newUnlocks.push({ id, kind: 'building' });
+    unlockedB = b;
   }
 
-  function damage(e: Enemy, amount: number): boolean {
-    e.hp -= amount;
-    if (e.hp > 0) { e.rig.fire('hit'); return false; }
-    wallet.earn(e.def.bounty);
-    state.killed++;
-    despawn(e as LaneEnemy);
-    return true;
-  }
+  /** Ціль крапель у клітинках світу. Поки HUD не сказав, де ручка — лівий верх смуги. */
+  let gaugeAt: () => Vec2 = () => [layout.ox + layout.cell, layout.oy + layout.cell];
+  const gaugeWorld = (): Vec2 => {
+    const [px, py] = gaugeAt();
+    return [(px - layout.ox) / layout.cell, (py - layout.oy) / layout.cell];
+  };
 
-  /** Наскільки ворог просунувся. Уся заміна BFS-поля на пряму — ось цей рядок. */
-  const distOf = (e: Enemy) => e.x;
-
-  const combat = createCombat({
-    layer: shotLayer, look, enemies, damage, distOf,
+  // --- село ------------------------------------------------------------------
+  const town = createTown({
+    data: buildings, rarity: weapons.rarity, rows: level.rows, cols: plots.cols,
+    plotX, plotHalf: plots.side / 2,
   });
 
-  // --- вежа ------------------------------------------------------------------
-  //
-  // Вежа — не склад деталей, а стос поверхів. Кімнати займають смугу рядів
-  // РІВНО, дах стирчить над нею, постамент під нею: стріляють тільки з кімнат,
-  // тому вертикаль засягу рахується саме по смузі. Це не косметика — combat
-  // міряє радіус двовимірно, і кімната, піднята вище смуги, втратила б дальні
-  // ряди мовчки.
-  const keep = createKeep(keepData, level.rows);
-
-  /**
-   * Кімната = ряд, тому й геометрія в них спільна.
-   *
-   * Це не збіг, а сама суть: combat міряє відстань двовимірно, тому кімната,
-   * зсунута по y відносно свого ряду, витрачала б радіус на подолання власної
-   * висоти. Вирівняні — витрачають його на горизонталь.
-   */
-  const floorH = () => rowHeight(band);
-  const floorY = (f: number) => rowY(band, f);
-
-  /** Півширина вежі — зона, що належить їй, а не полю. */
-  const towerReach = () => keepData.shell.roomW / 2 + 0.4;
-
-  /**
-   * Контур усієї вежі в 0..1 спільної коробки.
-   *
-   * Кімната малюється однією й тією ж трійкою штрихів, повтореною по числу
-   * поверхів; стелі в кімнати немає навмисно — стеля це підлога кімнати над
-   * нею, і другий раз намальована лінія дала б подвоєний штрих на кожному
-   * стику.
-   */
-  function shellGeometry() {
-    const sh = keepData.shell;
-    const W = sh.roomW;
-    const top = band.y0 - sh.roofH;
-    const H = sh.roofH + (band.y1 - band.y0) + sh.baseH;
-    const x0 = towerX - W / 2;
-    const fh = floorH();
-
-    const out: Vec2[][] = [];
-    const put = (strokes: Vec2[][], ry: number, rh: number) => {
-      for (const s of strokes) {
-        out.push(s.map(([px, py]): Vec2 => [px, (ry + py * rh - top) / H]));
-      }
-    };
-
-    const roof = keep.branch === 'fort' ? sh.roofFort
-      : keep.branch === 'arsenal' ? sh.roofArsenal
-        : sh.roofPlain;
-
-    put(roof, top, sh.roofH);
-    for (let i = 0; i < keep.floorCount; i++) {
-      put(sh.room, band.y0 + fh * i, fh);
-      // Закрита кімната стоїть забита дошками. Так рівень вежі має що показати:
-      // вежа не росте вгору — вона розкривається, і видно, скільки ще лишилось.
-      if (!keep.isOpen(i)) put(sh.locked, band.y0 + fh * i, fh);
-    }
-    put(sh.base, band.y1, sh.baseH);
-
-    return { outline: out, size: [W, H] as Vec2, x: x0 + W / 2, y: top + H / 2 };
-  }
-
-  /**
-   * Риг з обведених штрихів — і для захисника, і для союзника, і для самої вежі.
-   *
-   * `bakeTrace` пече штрихи в маску тим самим кодом, що каталог деталей, тому
-   * намальоване рукою й намальоване грою виходять однією рукою. Далі це
-   * звичайний риг з одної частини: дихання, замах і хіт-реакція дістаються
-   * задарма, без жодного окремого «рендеру юнітів».
-   */
-  function unitRig(size: Vec2, pen: string | undefined, outline: Vec2[][], mods: Mod[]) {
-    const tex = bakeTrace(renderer, outline, size, look);
-    const def: RigDef = {
-      hitbox: size,
-      anchors: {
-        hit: [0, -size[1] * 0.5],
-        // Постріл вилітає з фігури, а не з-під ніг: у лучника це висота рук.
-        muzzle: [size[0] * 0.45, -size[1] * 0.45],
-        ground: [0, size[1] / 2],
-      },
-      // Піво́т знизу, а зсув на півросту вгору: фігура сідає центром на свою
-      // лінію, тому сортування за y лишається чесним.
-      parts: [{ part: 'unit', pos: [0, size[1] / 2], pivot: [0.5, 1], pen: pen ?? 'blue', mods }],
-    };
-    return { rig: buildRig(def, new Map([['unit', tex]]), { unit: { size } }, look), tex };
-  }
-
-  // --- корпус ----------------------------------------------------------------
-  let shell: { rig: Rig; tex: Texture };
-
-  function buildShell() {
-    const g = shellGeometry();
-    const art = unitRig(g.size, 'blue', g.outline, [
-      // Корпус дихає ледь помітно: він кам'яний, а не живий.
-      { type: 'sway', amp: 0.5, freq: 0.19 },
-    ]);
-    // Корпус НЕ масштабується spriteScale: кімнати мусять лягати на смугу
-    // рядів рівно, інакше поверх з'їде відносно ряду, у який стріляє.
-    art.rig.view.position.set(g.x, g.y + g.size[1] / 2);
-    art.rig.setScale(1);
-    units.addChild(art.rig.view);
-    fixed.push(art.rig);
-    return art;
-  }
-
-  function dropShell() {
-    if (!shell) return;
-    const i = fixed.indexOf(shell.rig);
-    if (i >= 0) fixed.splice(i, 1);
-    shell.rig.view.destroy({ children: true });
-    // Текстура корпусу своя на кожну перебудову — bakeTrace щоразу віддає новий
-    // рендер-таргет, і не зняти його означає лишати його в пам'яті на кожен рівень.
-    shell.tex.destroy(true);
-  }
-
-  shell = buildShell();
-
-  // --- захисники в поверхах --------------------------------------------------
-  /** Малюнок захисника за номером поверху: риг і його ВЛАСНА текстура. */
-  const floorArt = new Map<number, { rig: Rig; tex: Texture }>();
-
-  /** Захисники в combat беруть від'ємні id: нуль за вежею, додатні за загоном. */
-  const defCombatId = (d: Defender) => -1 - d.id;
-
-  function mountDefender(d: Defender, art: { rig: Rig; tex: Texture }) {
-    const y = floorY(d.floor);
-    art.rig.view.position.set(towerX, y);
-    art.rig.setScale(1); // разом із корпусом: поверх мусить лягти на свою лінію
-    units.addChild(art.rig.view);
-    fixed.push(art.rig);
-    combat.add(defCombatId(d), d.gun, art.rig, towerX, y);
-  }
-
-  function dropDefenderArt(floor: number) {
-    const art = floorArt.get(floor);
-    if (!art) return;
-    const i = fixed.indexOf(art.rig);
-    if (i >= 0) fixed.splice(i, 1);
-    art.rig.view.destroy({ children: true });
-    art.tex.destroy(true);
-    floorArt.delete(floor);
-  }
-
-  /** Власна слабка гармата вежі — щоб на старті гра не стояла. */
-  function retuneKeepGun(first: boolean) {
-    if (first) combat.add(TOWER_ID, keep.gun, shell.rig, towerX, towerY);
-    else combat.retune(TOWER_ID, keep.gun, shell.rig);
-  }
-  retuneKeepGun(true);
-
-  /**
-   * Поставити захисника в поверх.
-   *
-   * Заводиться в combat тим самим викликом, що вежа й ренжовий союзник — тому
-   * сплеш і вибір цілі працюють для нього безплатно.
-   *
-   * @param outline штрихи з рамки обведення; без них береться контур із даних,
-   *   тому виклик із консолі теж працює й дає ідеальний силует
-   */
-  function placeDefender(
-    floor: number, kind: DefKind, quality = 1,
-    outline?: Vec2[][],
-  ): PlaceResult {
-    const def = keepData.defenders[kind];
-    if (!def) return { ok: false, reason: 'немає такого захисника' };
-    const price = keep.placeCost(kind);
-    // Питаємо ДО того, як склад прийняв: поверх зайнятий або чорнила бракує —
-    // однаково відмова, і краще одна перевірка, ніж відкат.
-    if (wallet.ink < price) return { ok: false, reason: 'мало чорнила' };
-
-    const d = keep.place(floor, kind, quality);
-    if (!d) return { ok: false, reason: 'поверх зайнятий' };
-    wallet.pay(price);
-
-    const art = unitRig(def.size, def.pen, outline ?? def.outline, [
-      { type: 'squash', amp: 0.05, freq: 1.1 },
-      { type: 'bob', amp: 0.03, freq: 1.1 },
-      { type: 'swing', amp: 9 },
-    ]);
-    floorArt.set(floor, art);
-    mountDefender(d, art);
-    return { ok: true, floor, spent: price, defender: d };
-  }
-
-  /** Підняти рівень захисника. Головна витрата чорнила. */
-  function levelDefender(floor: number): LevelResult {
-    const p = keep.preview(floor);
-    if (!p) return { ok: false, reason: 'нема кого підсилювати' };
-    if (wallet.ink < p.cost) return { ok: false, reason: 'мало чорнила' };
-
-    const d = keep.levelUp(floor);
-    if (!d) return { ok: false, reason: 'нема кого підсилювати' };
-    wallet.pay(p.cost);
-    // Малюнок той самий — рука двічі не працює. Міняються тільки числа.
-    combat.retune(defCombatId(d), d.gun, floorArt.get(floor)?.rig ?? shell.rig);
-    return { ok: true, floor, spent: p.cost, defender: d };
-  }
-
-  /**
-   * Пересадити всіх захисників після зміни числа поверхів.
-   *
-   * Поверхи ділять смугу порівну, тому щойно їх стало більше — кожен поверх
-   * поїхав, а разом із ним і той, хто в ньому сидить. `combat.retune` позицію
-   * НЕ оновлює, тому запис знімається й заводиться заново.
-   */
-  function reseatDefenders() {
-    for (const d of keep.floors) {
-      if (!d) continue;
-      const art = floorArt.get(d.floor);
-      if (!art) continue;
-      combat.remove(defCombatId(d));
-      const y = floorY(d.floor);
-      art.rig.view.position.set(towerX, y);
-      combat.add(defCombatId(d), d.gun, art.rig, towerX, y);
-    }
-  }
-
-  function rebuildShell() {
-    dropShell();
-    shell = buildShell();
-    retuneKeepGun(false);
-    reseatDefenders();
-  }
-
-  /** Рівень вежі: +поверх, +життя, трохи сильніша власна гармата. */
-  function growKeep(): GrowResult {
-    if (!keep.canGrow()) return { ok: false, reason: 'вище нікуди' };
-    const price = keep.growCost();
-    if (wallet.ink < price) return { ok: false, reason: 'мало чорнила' };
-    const lives0 = keep.bonusLives;
-    if (!keep.grow()) return { ok: false, reason: 'вище нікуди' };
-    wallet.pay(price);
-    // Життя дає рівень, тому стеля росте разом із поточним: інакше апгрейд
-    // лише піднімав би максимум, не рятуючи в цій партії.
-    const got = keep.bonusLives - lives0;
-    state.maxLives += got;
-    state.lives += got;
-    rebuildShell();
-    return { ok: true, level: keep.level, spent: price };
-  }
-
-  /** Розвилка гілки — один раз на партію. */
-  function pickBranch(id: string): GrowResult {
-    if (!keep.canBranch()) return { ok: false, reason: 'ще не час' };
-    const price = keep.branchCost();
-    if (wallet.ink < price) return { ok: false, reason: 'мало чорнила' };
-    if (!keep.pickBranch(id)) return { ok: false, reason: 'немає такої гілки' };
-    wallet.pay(price);
-    rebuildShell();
-    return { ok: true, level: keep.level, spent: price };
-  }
-
-  // --- загін -----------------------------------------------------------------
-  const squad = createSquad({
-    rows: level.rows, cols: level.squad.cols,
-    xLeft: level.squad.xLeft, xRight: level.squad.xRight,
-    melee: allies.melee.stats, ranged: allies.ranged.stats,
+  // --- армія -----------------------------------------------------------------
+  const army = createArmy({
+    weapons, rows: level.rows, slotX, holdX: level.holdX, homeX: level.homeX,
+    supportBack: level.supportBack,
+    // Прапори ряду: множник доїжджає до кожного удару й пострілу тим самим hitOf.
+    extraMul: (a, f) => town.dmgMul(a.row, f.cls),
   });
 
-  /** Малюнок союзника за id: риг і його ВЛАСНА текстура. У combat він заведений
-   *  під тим самим id, тому зняти союзника — це один ключ на все. */
+  /** Малюнок союзника за id: риг і його ВЛАСНА текстура зброї. */
   const allyArt = new Map<number, { rig: Rig; tex: Texture }>();
+  const buildingArt = new Map<number, BuildingArt>();
 
-  /** Союзники беруть id від 1: нуль назавжди за вежею. */
-  const allyCombatId = (a: Ally) => a.id;
+  /** Зірки рідкості над головою — колір рівня. Перо літер не вміє, тому
+   *  рідкість — це зірки й їхня ручка: олівець, синя, фіолетова, оранжева. */
+  function drawStars(g: Graphics, tier: Rarity, top: number) {
+    const n = tier.stars;
+    const r = 0.11, gap = 0.28;
+    const x0 = -((n - 1) * gap) / 2;
+    const color = look.pens[tier.pen] ?? look.pens.blue;
+    if (n >= 4) {
+      // Легендарна — під зірками маркерна пляма, як підкреслення в зошиті.
+      g.rect(x0 - r * 1.6, top - r * 0.9, (n - 1) * gap + r * 3.2, r * 2.1)
+        .fill({ color: look.pens.marker, alpha: 0.55 });
+    }
+    for (let i = 0; i < n; i++) {
+      penStar(g, x0 + i * gap, top, r, { color, width: 0.04, alpha: 0.9, halo: 0.12 });
+    }
+  }
+
+  /**
+   * Риг союзника: тіло з каталогу + зброя, яку щойно провела рука.
+   *
+   * Зброя — дитина тіла в точці руки, з піво́том у руків'ї: замах (swing) або
+   * віддача (recoil) крутять саме її, тому анімація атаки дістається з тих
+   * самих модифікаторів, що й у решти ригів. `bakeTrace` пече штрихи тим самим
+   * кодом, що каталог, тому крива рука й каталог виходять одним пером.
+   */
+  function allyRig(kind: WeaponKind, weaponId: string, strokes: Vec2[][], tier: Rarity) {
+    const body = weapons.bodies[kind];
+    const w = weapons.weapons[weaponId];
+    const tex = bakeTrace(renderer, strokes, w.size, look);
+
+    const weaponMods: Mod[] = kind === 'melee'
+      ? [{ type: 'sway', amp: 4, freq: 0.6 }, { type: 'swing', amp: 70 }]
+      : kind === 'ranged'
+        ? [{ type: 'sway', amp: 2, freq: 0.5 }, { type: 'recoil', amp: 0.2, dir: [-1, 0] }]
+        // Священик підіймає посох на зціленні: невеликий замах угору.
+        : [{ type: 'sway', amp: 3, freq: 0.4 }, { type: 'swing', amp: -25 }, { type: 'recoil', amp: 0.15, dir: [0, -1] }];
+
+    const def: RigDef = {
+      hitbox: body.size,
+      anchors: { hit: [0, -body.size[1] * 0.5], ground: [0, body.size[1] / 2] },
+      parts: [
+        {
+          part: body.part, pos: [0, body.size[1] / 2], pivot: [0.5, 1], pen: 'blue',
+          mods: [
+            { type: 'squash', amp: 0.04, freq: 1.1 },
+            { type: 'bob', amp: 0.06, freq: 2.2, on: 'walk' },
+          ],
+        },
+        {
+          part: 'weapon', parent: 0, pos: body.hand, pivot: w.grip, rot: w.rot ?? 0, pen: 'blue',
+          mods: weaponMods,
+        },
+      ],
+    };
+    const texMap = new Map(textures);
+    texMap.set('weapon', tex);
+    const rig = buildRig(def, texMap, { ...parts, weapon: { size: w.size } }, look);
+
+    const stars = new Graphics();
+    drawStars(stars, tier, -body.size[1] / 2 - 0.3);
+    rig.view.addChild(stars);
+    return { rig, tex };
+  }
 
   function dropAlly(a: Ally) {
     const art = allyArt.get(a.id);
-    if (art) {
-      unplace(art.rig);
-      // Текстура в кожного своя — вона ж і є те, що намалював гравець. Спільні
-      // маски каталогу так знімати не можна, а цю не зняти означає лишати
-      // рендер-таргет у пам'яті на кожного полеглого.
-      art.tex.destroy(true);
-      allyArt.delete(a.id);
-    }
-    combat.remove(allyCombatId(a));
+    if (!art) return;
+    unplace(art.rig);
+    // Текстура в кожного своя — вона і є те, що намалював гравець. Не зняти її
+    // означає лишати рендер-таргет у пам'яті на кожного полеглого.
+    art.tex.destroy(true);
+    allyArt.delete(a.id);
   }
 
-  /** Риг союзника — той самий `unitRig`, що збирає захисника вежі й сам корпус.
-   *  Одна функція на все намальоване: інакше три копії одного випікання
-   *  розійшлися б виглядом. */
-  const traceRig = (kind: AllyKind, outline: Vec2[][]) =>
-    unitRig(allies[kind].size, allies[kind].pen, outline, [
-      { type: 'squash', amp: 0.05, freq: 1.1 },
-      { type: 'bob', amp: 0.04, freq: 1.1 },
-      { type: 'swing', amp: 9 },
-    ]);
+  function summon(
+    weaponId: string, row: number, quality = 1,
+    strokes?: Vec2[][],
+  ): SummonOutcome {
+    const w = weapons.weapons[weaponId];
+    if (!w || weaponId.startsWith('_')) return { ok: false, reason: 'немає такої зброї' };
+    if (!unlocked.has(weaponId)) return { ok: false, reason: 'ще не відкрито' };
+    // Питаємо ДО того, як армія прийняла: інакше довелося б відкочувати.
+    if (wallet.ink < w.cost) return { ok: false, reason: 'мало чорнила' };
+    // Кузня ряду віддає заряд лише тому, хто справді став: ряд перевіряємо
+    // до того, як брати заряд.
+    if (!Number.isInteger(row) || row < 0 || row >= level.rows) return { ok: false, reason: 'немає такого ряду' };
 
-  /**
-   * Намалювати союзника в ряд.
-   *
-   * Ренжовий одразу заводиться в combat тим самим викликом, що й вежа — через
-   * це рикошет, сплеш і комбо працюють для нього безплатно. Мілі в combat не
-   * потрапляє: він б'є впритул, і його цикл нижче, в update().
-   */
-  function addAlly(
-    kind: AllyKind, row: number, quality = 1,
-    outline: Vec2[][] = allies[kind].outline,
-  ): AddAllyOutcome {
-    const price = allies[kind].cost;
-    if (wallet.ink < price) return { ok: false, reason: 'мало чорнила' };
-
-    const res = squad.add(kind, row, quality);
+    const boost = town.takeForge(row);
+    const res = army.summon(weaponId, row, quality, boost);
     if (!res.ok) return res;
-    wallet.pay(price);
-
-    // Виштовхнутий звільняє і риг, і місце в бою — інакше він стріляв би
-    // привидом із чужого місця.
-    if (res.replaced) dropAlly(res.replaced);
+    wallet.pay(w.cost);
 
     const a = res.ally;
-    const y = rowY(band, a.row);
-    const art = traceRig(kind, outline);
-    mount(art.rig, a.x, y);
+    const art = allyRig(a.kind, weaponId, strokes ?? w.outline, a.rarity);
+    mount(art.rig, a.x, rowY(band, a.row));
     allyArt.set(a.id, art);
-    if (a.gun) combat.add(allyCombatId(a), a.gun, art.rig, a.x, y);
-    return { ok: true, ally: a, spent: price };
+    if (boost > 0) fx.bless(a.x, rowY(band, a.row) - 0.9);
+    redrawForge(row);
+    return { ok: true, ally: a, rarity: a.rarity, spent: w.cost };
+  }
+
+  // --- будівлі ---------------------------------------------------------------
+  /** Риг будівлі: одна частина з обведених штрихів, ледь дихає. */
+  function buildingRig(b: Building, strokes: Vec2[][]): BuildingArt {
+    const size = b.def.size;
+    const tex = bakeTrace(renderer, strokes, size, look);
+    const e = b.def.effect;
+    const mods: Mod[] = e.type === 'banner'
+      ? [{ type: 'sway', amp: 3.5, freq: 0.7 }]
+      : e.type === 'trap'
+        ? [{ type: 'squash', amp: 0.03, freq: 0.5 }]
+        : [{ type: 'sway', amp: 0.6, freq: 0.25 }];
+    const def: RigDef = {
+      hitbox: size,
+      anchors: { hit: [0, -size[1] * 0.5], ground: [0, size[1] / 2] },
+      parts: [{ part: 'unit', pos: [0, size[1] / 2], pivot: [0.5, 1], pen: 'blue', mods }],
+    };
+    const rig = buildRig(def, new Map([['unit', tex]]), { unit: { size } }, look);
+    const stars = new Graphics();
+    drawStars(stars, b.rarity, -size[1] / 2 - 0.22);
+    rig.view.addChild(stars);
+    const hpG = new Graphics();
+    rig.view.addChild(hpG);
+    return { rig, tex, hpG, drop: null, readyG: null, t: 0 };
+  }
+
+  /** Рисочки hp під будівлею: з'являються лише коли її вже били. */
+  function drawHp(b: Building, art: BuildingArt) {
+    art.hpG.clear();
+    if (b.hp >= b.maxHp) return;
+    const n = 6, w = b.def.size[0] * 0.8, y = b.def.size[1] / 2 + 0.14;
+    const alive = Math.ceil((b.hp / b.maxHp) * n);
+    for (let i = 0; i < n; i++) {
+      const x = -w / 2 + (i + 0.5) * (w / n);
+      penStroke(art.hpG, [[x - 0.05, y + 0.1], [x + 0.05, y - 0.1]], {
+        color: i < alive ? look.pens.blue : look.pens.red, width: 0.045, alpha: 0.85,
+        jitter: 0.01, step: 0.2, overshoot: 0.02, halo: 0.1,
+      });
+    }
+  }
+
+  /** Крапля над колодязем: висить і чекає тапу. */
+  function showDrop(b: Building, art: BuildingArt) {
+    if (art.drop) return;
+    const g = new Graphics();
+    const r = 0.26;
+    const pen = { color: look.pens.green, width: 0.05, alpha: 0.95, jitter: 0.012, step: 0.12, overshoot: 0, halo: 0.2 };
+    // Маркерне коло під краплею: «тапни мене».
+    g.circle(0, 0, r * 1.7).fill({ color: look.pens.marker, alpha: 0.45 });
+    penCircle(g, 0, 0, r, pen);
+    penStroke(g, [[-r * 0.55, -r * 0.8], [0, -r * 1.7], [r * 0.55, -r * 0.8]], { ...pen, width: 0.045 });
+    hatch(g, -r, -r, r * 2, r * 2, { ...pen, gap: r * 0.5, jitterGap: 0.2, width: 0.035, alpha: 0.6 });
+    g.position.set(0, -b.def.size[1] / 2 - 0.75);
+    art.rig.view.addChild(g);
+    art.drop = g;
+  }
+
+  function hideDrop(art: BuildingArt) {
+    art.drop?.destroy();
+    art.drop = null;
+  }
+
+  /** Кузня з зарядом: маркерна іскра над нею. */
+  function redrawForge(row: number) {
+    for (const b of town.buildings) {
+      if (b.row !== row || b.def.effect.type !== 'forge') continue;
+      const art = buildingArt.get(b.id);
+      if (!art) continue;
+      art.readyG?.destroy();
+      art.readyG = null;
+      if (!b.ready) continue;
+      const g = new Graphics();
+      penStar(g, 0.55, -b.def.size[1] / 2 - 0.2, 0.16, { color: look.pens.orange ?? look.pens.red, width: 0.045, alpha: 0.95, halo: 0.2 });
+      art.rig.view.addChild(g);
+      art.readyG = g;
+    }
+  }
+
+  function dropBuilding(b: Building) {
+    const art = buildingArt.get(b.id);
+    if (!art) return;
+    unplace(art.rig);
+    art.tex.destroy(true);
+    buildingArt.delete(b.id);
+    drawGlow();
+  }
+
+  function build(kind: string, row: number, col: number, quality = 1, strokes?: Vec2[][]): BuildOutcome {
+    const d = buildings.buildings[kind];
+    if (!d || kind.startsWith('_')) return { ok: false, reason: 'немає такої будівлі' };
+    if (!unlockedB.has(kind)) return { ok: false, reason: 'ще не відкрито' };
+    if (wallet.ink < d.cost) return { ok: false, reason: 'мало чорнила' };
+
+    const res = town.build(kind, row, col, quality);
+    if (!res.ok) return res;
+    wallet.pay(d.cost);
+
+    const b = res.building;
+    const art = buildingRig(b, strokes ?? d.outline);
+    mount(art.rig, b.x, rowY(band, b.row));
+    buildingArt.set(b.id, art);
+    redrawForge(row);
+    drawGlow();
+    return { ok: true, building: b, spent: d.cost };
+  }
+
+  function plotAt(cx: number, cy: number) {
+    if (cy < band.y0 || cy > band.y1) return null;
+    const row = rowOf(band, cy);
+    const half = plots.side / 2 + 0.15;
+    for (let c = 0; c < plots.cols; c++) {
+      if (Math.abs(cx - plotX(c)) <= half && Math.abs(cy - rowY(band, row)) <= half) return { row, col: c };
+    }
+    return null;
+  }
+
+  const plotCenter = (row: number, col: number): Vec2 => [plotX(col), rowY(band, row)];
+
+  function collectAt(cx: number, cy: number): boolean {
+    for (const b of town.buildings) {
+      const art = buildingArt.get(b.id);
+      if (!art?.drop) continue;
+      // Крапля — дитина рига, а риг масштабований spriteScale: у світ її y іде через масштаб.
+      const dx = cx - b.x, dy = cy - (rowY(band, b.row) + art.drop.y * layout.spriteScale);
+      if (Math.hypot(dx, dy) > 0.9) continue;
+      const ink = town.collect(b);
+      if (!ink) continue;
+      // Крапля летить у ручку тим самим польотом, що й будь-яке чорнило, і
+      // зараховується на прильоті.
+      fx.inkDrop(b.x, rowY(band, b.row) + art.drop.y * layout.spriteScale, ink, gaugeWorld, () => wallet.earn(ink));
+      hideDrop(art);
+      return true;
+    }
+    return false;
   }
 
   // --- вороги ----------------------------------------------------------------
   function spawnEnemy(row: number | null = null, typeId = 'earling', hpMul = 1): LaneEnemy {
     const r = row ?? Math.floor(Math.random() * band.rows);
-    const def = balance.enemies[typeId];
+    const def = enemyDefs[typeId];
     const y = rowY(band, r);
-    const rig = place(def.rig, level.spawnX, y);
+    const rig = mount(buildRig(rigDefs[def.rig], textures, parts, look), level.spawnX, y);
     const e: LaneEnemy = {
-      rig, def, row: r,
-      hp: Math.round(def.hp * hpMul),
-      x: level.spawnX, y,
-      // Крокової цілі немає: ворог іде прямо. Поля лишаються, бо combat.ts
-      // приймає Enemy, а міняти його заради двох null — гірше, ніж їх лишити.
-      tx: null, ty: null,
+      id: nextEnemyId++, def, rig, row: r, y,
+      x: level.spawnX, hp: Math.round(def.hp * hpMul),
+      cls: def.cls, damage: def.damage, rate: def.rate, reach: def.reach, speed: def.speed,
+      cd: 0, moving: true, vs: def.vs,
     };
     enemies.push(e);
     state.spawned++;
     return e;
   }
 
-  /**
-   * Рукопашна: мілі тримає ворога свого ряду й розмінюється з ним ударами.
-   *
-   * Це єдине, що не можна віддати combat.ts: він знає лише «стріляти по цілі
-   * в радіусі» і нічого не знає про те, що хтось перекриває дорогу. Тому цикл
-   * тут, а combat лишається недоторканим.
-   *
-   * @returns true, якщо ворога тримають — тоді він цього кадру не йде.
-   */
-  function meleeHold(e: LaneEnemy, dt: number): boolean {
-    const blocker = squad.blockerAt(e.row, e.x);
-    if (!blocker || e.x - blocker.x > blocker.reach) return false;
-
-    blocker.cd -= dt;
-    if (blocker.cd <= 0) {
-      blocker.cd = 1 / blocker.rate;
-      allyArt.get(blocker.id)?.rig.fire('attack');
-      damage(e, blocker.damage);
-    }
-
-    // Ворог б'є у відповідь: інакше мілі тримав би лінію вічно й безкарно.
-    e.rig.fire('attack');
-    if (squad.damage(blocker, e.def.speed * dt * 6)) dropAlly(blocker);
-    return true;
+  function despawn(e: LaneEnemy) {
+    unplace(e.rig);
+    const i = enemies.indexOf(e);
+    if (i >= 0) enemies.splice(i, 1);
   }
 
-  function advance(e: LaneEnemy, step: number) {
-    e.x -= step;
-    if (e.x > towerX) return;
-    shell.rig.fire('hit');
-    // Щит гілки Форту тримає удар замість життя. Заряд витрачається, ворог
-    // зникає, лічильник протікань не рухається — протікання тут не було.
-    if (keep.spendShield()) {
-      despawn(e);
+  /** Смерть ворога: закреслення й зняття. Чорнила з нього не падає — його дають будівлі. */
+  function killEnemy(e: LaneEnemy) {
+    if (!enemies.includes(e)) return;
+    fx.strikeOut(e.x, e.y, e.def.size * 0.8, e.def.size);
+    state.killed++;
+    despawn(e);
+  }
+
+  /**
+   * Ворог на лінії дому. Поки в ряду є заряд лазера — промінь спалює всіх у
+   * цьому ряду (як газонокосарка в PvZ), і життя ціле. Заряду немає — мінус
+   * життя.
+   */
+  function leak(e: LaneEnemy) {
+    if (!enemies.includes(e)) return;
+    if (lasers[e.row] > 0) {
+      lasers[e.row]--;
+      fx.laser(level.homeX + 0.32, level.spawnX + 0.5, e.y);
+      for (const foe of [...enemies]) if (foe.row === e.row) killEnemy(foe);
+      drawLasers();
       return;
     }
-    // Дійшов до вежі: життя мінус, ворог зникає. Бази як окремого об'єкта
-    // немає — вежа і є те, що захищають.
+    fx.strikeOut(level.homeX, e.y, 0.8, 1.2, look.pens.red);
     state.lives = Math.max(0, state.lives - 1);
     state.leaked++;
     despawn(e);
     if (state.lives === 0) state.phase = 'lost';
   }
 
-  /** Хвилі: наступна починається, коли поле чисте, а не за таймером —
-   *  перерва це час домалювати вежу, і вкорочувати її автоматично нечесно. */
+  // --- снаряди ---------------------------------------------------------------
+  const shots: Shot[] = [];
+
+  function shoot(a: Ally, target: LaneEnemy) {
+    const y = rowY(band, a.row) - 0.55; // з висоти рук, не з-під ніг
+    const g = fx.bolt(a.x + 0.4, y, 1);
+    shots.push({ g, x: a.x + 0.4, y, speed: a.shot, ally: a, target });
+    allyArt.get(a.id)?.rig.fire('attack');
+  }
+
+  function updateShots(dt: number) {
+    for (let i = shots.length - 1; i >= 0; i--) {
+      const s = shots[i];
+      s.x += s.speed * dt;
+      s.g.position.set(s.x, s.y);
+      const alive = enemies.includes(s.target);
+      if (alive && s.x >= s.target.x - 0.2) {
+        const h = army.hitOf(s.ally, s.target);
+        s.target.hp -= h.amount;
+        fx.spark(s.x, s.y);
+        fx.number(s.target.x, s.target.y - s.target.def.size - 0.3, h.amount, { bonus: h.bonus, penalty: h.penalty });
+        if (s.target.hp <= 0) killEnemy(s.target);
+      } else if (s.x < level.spawnX + 1.5) {
+        // Ще летить. Ціль могла зникнути — риска однаково долітає до краю й
+        // гасне там, а не блимає на місці.
+        continue;
+      }
+      s.g.destroy();
+      shots.splice(i, 1);
+    }
+  }
+
+  // --- хвилі -----------------------------------------------------------------
+  /** Наступна починається, коли поле чисте, а не за таймером: перерва — це час
+   *  домалювати, і вкорочувати її автоматично нечесно. */
   function updateWaves(dt: number) {
     const w = level.waves[state.wave];
 
@@ -638,7 +714,7 @@ export function createLaneGame({
     if (waveLeft > 0) {
       spawnTimer -= dt;
       if (spawnTimer > 0) return;
-      spawnEnemy(w.row ?? null, w.enemy ?? 'earling', w.hp ?? 1);
+      spawnEnemy(w.row ?? null, pickWeighted(w.mix, Math.random()), w.hp ?? 1);
       waveLeft--;
       spawnTimer = w.every;
       return;
@@ -649,60 +725,128 @@ export function createLaneGame({
     state.wave++;
     state.phase = 'break';
     state.breakLeft = level.waveBreak ?? 5;
-    // Щит наливається між хвилями, а не в бою: інакше Форт тримав би нескінченно.
-    keep.refillShield();
+    // Винагорода за пройдену хвилю — нова зброя чи будівля, і саме в перерві,
+    // коли є час її роздивитись.
+    refreshUnlocks();
   }
 
+  // --- цикл ------------------------------------------------------------------
   function update(dtMs: number) {
     const dt = dtMs / 1000;
     const over = state.phase === 'won' || state.phase === 'lost';
 
     if (!over) {
       updateWaves(dt);
-      // Згаслі союзники зникають самі: недбало намальований в'яне швидше, і
-      // це та ціна поспіху, на якій тримається бій.
-      for (const gone of squad.tick(dt)) dropAlly(gone);
 
-      for (const e of [...enemies]) {
-        // Спершу питаємо, чи його тримають: якщо так — крок цього кадру
-        // не робиться взагалі, а не робиться й скасовується.
-        if (meleeHold(e, dt)) {
-          if (!enemies.includes(e)) continue;
-          e.rig.moving = false;
+      for (const ev of town.tick(dt, army.allies)) {
+        const art = buildingArt.get(ev.building.id);
+        if (!art) continue;
+        if (ev.type === 'drop') {
+          showDrop(ev.building, art);
         } else {
-          advance(e, e.def.speed * (1 - (e.slow ?? 0)) * dt);
-          if (!enemies.includes(e)) continue;
-          e.rig.moving = true;
+          art.rig.fire('attack');
+          for (const t of ev.targets) {
+            const y = rowY(band, t.row);
+            fx.bless(t.x, y - 0.6);
+            fx.number(t.x, y - 1.3, ev.amount, { color: look.pens.green, plus: true });
+          }
         }
+      }
+      // Кузня перезарядилась — іскра має з'явитись сама, без чужого тапу.
+      for (const b of town.buildings) {
+        if (b.def.effect.type !== 'forge') continue;
+        const art = buildingArt.get(b.id);
+        if (art && b.ready !== !!art.readyG) redrawForge(b.row);
+      }
+
+      for (const ev of army.stepAllies(enemies, dt)) {
+        if (ev.type === 'strike') {
+          const foe = ev.foe as LaneEnemy;
+          allyArt.get(ev.ally.id)?.rig.fire('attack');
+          foe.rig.fire('hit');
+          fx.number(foe.x, foe.y - foe.def.size - 0.3, ev.amount, { bonus: ev.bonus, penalty: ev.penalty });
+          if (ev.killed) killEnemy(foe);
+        } else if (ev.type === 'shoot') {
+          shoot(ev.ally, ev.foe as LaneEnemy);
+        } else {
+          allyArt.get(ev.ally.id)?.rig.fire('attack');
+          for (const t of ev.targets) {
+            const y = rowY(band, t.row);
+            fx.bless(t.x, y - 0.6);
+            fx.number(t.x, y - 1.3, ev.amount, { color: look.pens.green, plus: true });
+          }
+        }
+      }
+
+      for (const ev of army.stepFoes(enemies, dt, { obstacles: town.buildings, slowAt: town.slowAt })) {
+        const foe = ev.foe as LaneEnemy;
+        if (ev.type === 'hit') {
+          foe.rig.fire('attack');
+          allyArt.get(ev.ally.id)?.rig.fire('hit');
+          fx.number(ev.ally.x, rowY(band, ev.ally.row) - 1.1, ev.amount, { bonus: ev.amount > foe.def.damage });
+          if (ev.killed) {
+            // Своїх закреслюємо синім: колір і тут каже, хто чий.
+            fx.strikeOut(ev.ally.x, rowY(band, ev.ally.row) + 0.75, 1.0, 1.5, look.pens.blue);
+            dropAlly(ev.ally);
+          }
+        } else if (ev.type === 'smash') {
+          const b = ev.obstacle as Building;
+          foe.rig.fire('attack');
+          const art = buildingArt.get(b.id);
+          art?.rig.fire('hit');
+          fx.number(b.x, rowY(band, b.row) - b.def.size[1] / 2 - 0.4, ev.amount);
+          if (town.damage(b, ev.amount)) {
+            fx.strikeOut(b.x, rowY(band, b.row) + b.def.size[1] / 2, b.def.size[0], b.def.size[1], look.pens.blue);
+            dropBuilding(b);
+          } else if (art) {
+            drawHp(b, art);
+          }
+        } else {
+          leak(foe);
+        }
+      }
+
+      updateShots(dt);
+
+      for (const a of army.allies) {
+        const art = allyArt.get(a.id);
+        if (!art) continue;
+        art.rig.moving = a.moving;
+        art.rig.view.position.set(a.x, rowY(band, a.row));
+      }
+      for (const e of enemies) {
+        e.rig.moving = e.moving;
         e.rig.view.position.set(e.x, e.y);
       }
+      // Крапля над колодязем погойдується: живе, а не намальована.
+      for (const art of buildingArt.values()) {
+        art.t += dt;
+        if (art.drop) art.drop.y += Math.sin(art.t * 3) * 0.004;
+      }
     }
-    combat.update(dt, !over);
 
-    for (let i = fx.length - 1; i >= 0; i--) if (fx[i].step(dt)) fx.splice(i, 1);
+    fx.step(dt);
     for (const r of rigs) r.update(dtMs);
     units.children.sort((a, b) => a.y - b.y);
   }
 
   function rescale(s: number) {
-    // Корпус вежі й ті, хто в поверхах, лишаються один-до-одного: їхні
-    // координати зав'язані на смугу рядів, а не на читаність фігури.
     for (const r of rigs) r.setScale(s);
   }
 
   drawLanes();
+  drawLasers();
 
   return {
-    state, wallet, enemies, combat, band, keep, towerX, towerY,
-    spawnEnemy, damage, squad, addAlly, update, rescale,
-    floorY, floorH,
-    placeDefender, levelDefender, growKeep, pickBranch,
-    // Зона вежі не залежить від рівня: корпус однакової ширини на всіх
-    // поверхах. Але й не далі за передню колонку загону — у неї теж мусить
-    // бути куди тикнути.
-    get towerReach() {
-      return Math.min(towerReach(), level.squad.xLeft - towerX - 0.3);
-    },
-    resize: drawLanes,
+    state, wallet, enemies, army, town, band, level, slotX, lasers,
+    spawnEnemy, summon, build, plotAt, plotCenter, collectAt, update, rescale,
+    setSlotsActive(on) { if (on === slotsActive) return; slotsActive = on; drawGlow(); },
+    setPlotsActive(on) { if (on === plotsActive) return; plotsActive = on; drawGlow(); },
+    setFocusRow(row) { if (row === focusRow) return; focusRow = row; drawGlow(); },
+    isUnlocked: (id) => unlocked.has(id),
+    isBuildingUnlocked: (id) => unlockedB.has(id),
+    takeUnlocks() { return newUnlocks.splice(0); },
+    setGauge(at) { gaugeAt = at; },
+    resize() { drawLanes(); drawGlow(); drawLasers(); },
   };
 }

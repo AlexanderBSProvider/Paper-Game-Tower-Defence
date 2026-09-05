@@ -20,11 +20,12 @@ import { createSdk } from './sdk.js';
 import { createTracePad } from './controller/tracepad.js';
 import { createWorkshop } from './controller/workshop.js';
 import { createLaneGame } from './laneGame.js';
-import { createTowerPanel } from './controller/towerPanel.js';
 import { createLaneHud } from './controller/laneHud.js';
 import { createSquadPanel } from './controller/squadPanel.js';
-import type { Allies, LaneLevel } from './model/lane.js';
-import type { KeepData } from './model/keep.js';
+import { createShelf } from './controller/shelfDom.js';
+import type { BuildingsData } from './model/buildings.js';
+import type { LaneEnemies, LaneLevel } from './model/lane.js';
+import type { WeaponsData } from './model/weapons.js';
 import type {
   Balance, Layout, Level, Look, Parts, RigDefs, TowerParts,
 } from './types.js';
@@ -48,13 +49,14 @@ const [look, parts, rigDefs, level, balance, towerParts] = await Promise.all([
 
 // Дані режиму тягнемо лише коли він увімкнений: лабіринту вони не потрібні,
 // і платити за них зайвими запитами він не мусить.
-const [laneLevel, laneAllies, laneKeep] = lane
+const [laneLevel, laneWeapons, laneEnemies, laneBuildings] = lane
   ? await Promise.all([
       fetch('./data/laneLevel.json').then((r) => r.json()),
-      fetch('./data/allies.json').then((r) => r.json()),
-      fetch('./data/keep.json').then((r) => r.json()),
-    ]) as [LaneLevel, Allies, KeepData]
-  : [null, null, null];
+      fetch('./data/weapons.json').then((r) => r.json()),
+      fetch('./data/laneEnemies.json').then((r) => r.json()),
+      fetch('./data/buildings.json').then((r) => r.json()),
+    ]) as [LaneLevel, WeaponsData, LaneEnemies, BuildingsData]
+  : [null, null, null, null];
 
 const sdk = createSdk();
 await sdk.init();
@@ -118,36 +120,49 @@ resizers.push((L) => tracePad.resize(L));
 
 if (lane) {
   const laneGame = createLaneGame({
-    world, renderer: app.renderer, look, level: laneLevel!, allies: laneAllies!, balance,
-    rigDefs, parts, textures, layout, keepData: laneKeep!,
-  });
-  const towerPanel = createTowerPanel({
-    canvas: app.canvas, app, hudLayer: hud, worldLayer: world,
-    look, layout, game: laneGame, keepData: laneKeep!, tracePad,
+    world, renderer: app.renderer, look, level: laneLevel!, weapons: laneWeapons!,
+    buildings: laneBuildings!, enemyDefs: laneEnemies!, balance, rigDefs, parts, textures, layout,
   });
   // ponytail: рестарт через перезавантаження — те саме рішення, що в лабіринті.
   const laneHud = createLaneHud({
-    hud, look, balance, allies: laneAllies!, game: laneGame, onRestart: () => location.reload(),
+    hud, look, balance, weapons: laneWeapons!, buildings: laneBuildings!, game: laneGame,
+    onRestart: () => location.reload(),
   });
-  // Створюється ПІСЛЯ towerPanel: обробники pointerdown ідуть у порядку
-  // підписки, тож панель вежі встигає підняти busyPointer до того, як загін
-  // побачить той самий тап.
+  // Краплі чорнила летять у колбу ручки на полях: HUD знає, де вона.
+  laneGame.setGauge(() => laneHud.gaugeAt());
+  // Полиця трафаретів — DOM: назви й підказки, які перо намалювати не вміє.
+  const shelf = createShelf();
   const squadPanel = createSquadPanel({
-    canvas: app.canvas, app, layout, game: laneGame, allies: laneAllies!, tracePad, hud: laneHud,
-    blocked: () => tracePad.open || towerPanel.open || towerPanel.busyPointer,
+    canvas: app.canvas, app, hudLayer: hud, look, layout, game: laneGame, weapons: laneWeapons!,
+    buildings: laneBuildings!, tracePad, shelf, hud: laneHud,
+    blocked: () => tracePad.open,
   });
 
-  systems.push((dt) => laneGame.update(dt));
-  systems.push((dt) => towerPanel.update(dt / 1000));
-  systems.push(() => laneHud.tick());
+  // Поки відкрита рамка обведення, бій тече повільно (~10%): малювати
+  // доводиться під час хвилі, і без цього обведення коштувало б життів. Не
+  // пауза — вороги ще йдуть, і видно, що час не чекає.
+  const slow = laneLevel!.slowWhileDrawing ?? 0.1;
+  systems.push((dt) => laneGame.update(tracePad.open ? dt * slow : dt));
+  systems.push((dt) => squadPanel.update(dt / 1000));
+  systems.push((dt) => laneHud.tick(dt / 1000));
+
+  // Інструкція — DOM-записка поверх канваса, бо перо літер не вміє. Показується
+  // раз на старті, гра стоїть, поки її не прибрали тапом.
+  const howto = document.getElementById('howto');
+  if (howto) {
+    howto.hidden = false;
+    state.paused = true;
+    const dismiss = () => { howto.hidden = true; state.paused = document.hidden; };
+    howto.addEventListener('pointerdown', dismiss, { once: true });
+  }
   resizers.push((L) => { laneGame.rescale(L.spriteScale); laneGame.resize(); });
-  resizers.push(() => towerPanel.resize());
   resizers.push((L) => laneHud.resize(L));
   phaseOf = () => laneGame.state.phase;
 
   window.__td = {
     app, look, layout, world, hud, paper, state, systems,
-    laneGame, towerPanel, laneHud, squadPanel, sdk, textures, partTex, tracePad, laneLevel,
+    laneGame, laneHud, squadPanel, sdk, textures, tracePad, laneLevel, laneWeapons, laneEnemies,
+    laneBuildings, shelf,
   };
 } else {
   const game = createGame({
@@ -220,7 +235,9 @@ function relayout() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  state.paused = document.hidden;
+  // Поки висить інструкція, гра стоїть незалежно від вкладки.
+  const howtoUp = !(document.getElementById('howto')?.hidden ?? true);
+  state.paused = document.hidden || howtoUp;
   if (document.hidden) sdk.gameplayStop();
   else if (phaseOf() === 'wave') sdk.gameplayStart();
 });
