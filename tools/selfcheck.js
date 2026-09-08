@@ -1323,4 +1323,29 @@ const enemyIds = Object.keys(EN).filter((k) => !k.startsWith('_'));
   }
 }
 
+
+// --- риг → частина → генератор ----------------------------------------------
+// Найтихіша поломка вигляду: риг просить частину, якої немає в parts.json, або
+// частина просить proc:-генератор, якого ніхто не написав. Гра на це лише пише
+// warn у консоль і малює ворога без голови — на екрані помічають не одразу.
+{
+  const RG = JSON.parse(readFileSync(root + 'data/rigs.json', 'utf8'));
+  const PT = JSON.parse(readFileSync(root + 'data/parts.json', 'utf8'));
+  // ponytail: мапу DOODLES читаємо реґекспом, а не імпортом — procart.ts тягне
+  // Pixi, а Pixi в node не живе. Перестане ловити, якщо мапу перепишуть інакше:
+  // тоді assert нижче про розмір сам про це і скаже.
+  const src = readFileSync(root + 'src/view/procart.ts', 'utf8');
+  const doodles = new Set([...src.matchAll(/^ {2}(\w+): \w+,\r?$/gm)].map((m) => m[1]));
+  assert.ok(doodles.size > 5, 'мапу DOODLES не вичитали — перевірка нижче нічого не варта');
+
+  for (const [id, rig] of Object.entries(RG)) {
+    if (id.startsWith('_')) continue;
+    for (const p of rig.parts) assert.ok(PT[p.part], `риг ${id}: частини ${p.part} немає в parts.json`);
+  }
+  for (const [id, def] of Object.entries(PT)) {
+    if (id.startsWith('_') || !def.file.startsWith('proc:')) continue;
+    assert.ok(doodles.has(def.file.slice(5)), `частина ${id}: генератора ${def.file} немає в procart.ts`);
+  }
+}
+
 console.log('selfcheck: ok');

@@ -227,6 +227,86 @@ function bruteHead(g: Graphics, w: number, h: number, lw: number) {
   penStroke(g, [[cx + r * 0.45, cy + r * 0.55], [cx + r * 0.55, cy + r * 1.05], [cx + r * 0.3, cy + r * 0.6]], ink({ width: lw * 0.8 }));
 }
 
+// --- тестові вигляди зі скетчу власника -----------------------------------
+// Три силуети на один погляд: сніговик стоїть, павучок висить на лапах,
+// рогатий розкрив крила. Форму видно ще до того, як око знайде цифри.
+
+// 1 — звичайний: дві кулі й гілка замість руки.
+function snowlingBody(g: Graphics, w: number, h: number, lw: number) {
+  penCircle(g, w * 0.5, h * 0.55, Math.min(w, h) * 0.44, ink({ width: lw }));
+  // гілка-рука вбік, з трьома пальцями на кінці
+  const ax = w * 0.86, ay = h * 0.52;
+  penStroke(g, [[w * 0.52, h * 0.38], [ax, ay]], ink({ width: lw * 0.9 }));
+  for (const d of [-0.22, 0, 0.22]) {
+    penStroke(g, [[ax, ay], [ax + w * 0.13, ay + h * (0.06 + d * 0.6)]], ink({ width: lw * 0.7 }));
+  }
+  hatch(g, w * 0.24, h * 0.62, w * 0.4, h * 0.26, ink({ gap: w * 0.11, width: lw * 0.5, alpha: 0.45 }));
+}
+
+function snowlingHead(g: Graphics, w: number, h: number, lw: number) {
+  const cx = w * 0.5, cy = h * 0.52, r = Math.min(w, h) * 0.42;
+  penCircle(g, cx, cy, r, ink({ width: lw }));
+  // очі заплющені: дві похилі рисочки
+  for (const s of [-1, 1]) {
+    penStroke(g, [[cx + s * r * 0.55, cy - r * 0.22], [cx + s * r * 0.18, cy - r * 0.05]], ink({ width: lw * 0.85 }));
+  }
+  penStroke(g, [[cx - r * 0.22, cy + r * 0.42], [cx + r * 0.22, cy + r * 0.42]], ink({ width: lw * 0.9 }));
+}
+
+// 2 — швидкий: чотири тонкі лапи, і сам він менший за них.
+function crawlerLimbs(g: Graphics, w: number, h: number, lw: number) {
+  const cx = w * 0.5, cy = h * 0.5;
+  // верхні довші за нижні — тіло висить, а не стоїть
+  for (const s of [-1, 1]) {
+    penPath(g, [[cx + s * w * 0.1, cy - h * 0.05], [cx + s * w * 0.34, h * 0.06], [cx + s * w * 0.49, h * 0.3]], ink({ width: lw * 0.85 }));
+    penPath(g, [[cx + s * w * 0.1, cy + h * 0.08], [cx + s * w * 0.3, h * 0.62], [cx + s * w * 0.44, h * 0.98]], ink({ width: lw * 0.85 }));
+  }
+}
+
+function crawlerHead(g: Graphics, w: number, h: number, lw: number) {
+  const cx = w * 0.5, cy = h * 0.5, r = Math.min(w, h) * 0.42;
+  penCircle(g, cx, cy, r, ink({ width: lw }));
+  // очі-галочки: злість без жодної зайвої лінії
+  for (const s of [-1, 1]) {
+    penPath(g, [[cx + s * r * 0.62, cy - r * 0.42], [cx + s * r * 0.2, cy - r * 0.12], [cx + s * r * 0.6, cy - r * 0.02]], ink({ width: lw * 0.8 }));
+  }
+  penStroke(g, [[cx - r * 0.5, cy + r * 0.35], [cx + r * 0.5, cy + r * 0.35]], ink({ width: lw * 0.85 }));
+  for (const s of [-1, 1]) {
+    penPath(g, [[cx + s * r * 0.34, cy + r * 0.35], [cx + s * r * 0.2, cy + r * 0.78], [cx + s * r * 0.08, cy + r * 0.35]], ink({ width: lw * 0.7 }));
+  }
+}
+
+// 3 — танк: розмах крил удвічі ширший за голову, тому його видно здалеку.
+function bathornWings(g: Graphics, w: number, h: number, lw: number) {
+  const cx = w * 0.5, cy = h * 0.52;
+  for (const s of [-1, 1]) {
+    const tip = cx + s * w * 0.48;
+    penPath(g, [[cx + s * w * 0.1, cy - h * 0.06], [cx + s * w * 0.3, h * 0.04], [tip, cy + h * 0.24]], ink({ width: lw }));
+    // перетинка двома фестонами назад до тіла
+    penStroke(g, [
+      [tip, cy + h * 0.24], [cx + s * w * 0.34, cy + h * 0.1], [cx + s * w * 0.26, cy + h * 0.26],
+      [cx + s * w * 0.16, cy + h * 0.08], [cx + s * w * 0.09, cy + h * 0.2],
+    ], ink({ width: lw * 0.85 }));
+  }
+}
+
+function bathornHead(g: Graphics, w: number, h: number, lw: number) {
+  const cx = w * 0.5, cy = h * 0.56, r = Math.min(w, h) * 0.36;
+  // роги — перше, що видно над колом
+  for (const s of [-1, 1]) {
+    penPath(g, [[cx + s * r * 0.62, cy - r * 0.78], [cx + s * r * 0.5, cy - r * 1.5], [cx + s * r * 0.22, cy - r * 0.95]], ink({ width: lw * 0.9 }));
+  }
+  penCircle(g, cx, cy, r, ink({ width: lw }));
+  for (const s of [-1, 1]) {
+    penPath(g, [[cx + s * r * 0.68, cy - r * 0.4], [cx + s * r * 0.22, cy - r * 0.08], [cx + s * r * 0.66, cy + r * 0.02]], ink({ width: lw * 0.85 }));
+  }
+  penStroke(g, [[cx - r * 0.52, cy + r * 0.36], [cx + r * 0.52, cy + r * 0.36]], ink({ width: lw * 0.9 }));
+  for (const s of [-1, 1]) {
+    penPath(g, [[cx + s * r * 0.4, cy + r * 0.36], [cx + s * r * 0.24, cy + r * 0.86], [cx + s * r * 0.08, cy + r * 0.36]], ink({ width: lw * 0.75 }));
+  }
+  hatch(g, cx - r * 0.9, cy - r * 0.9, r * 1.8, r * 0.7, ink({ gap: r * 0.32, width: lw * 0.45, alpha: 0.35, angle: -0.5 }));
+}
+
 const DOODLES: Record<string, Doodle> = {
   earling_body: earlingBody,
   earling_head: earlingHead,
@@ -247,6 +327,12 @@ const DOODLES: Record<string, Doodle> = {
   runner_head: runnerHead,
   brute_body: bruteBody,
   brute_head: bruteHead,
+  snowling_body: snowlingBody,
+  snowling_head: snowlingHead,
+  crawler_limbs: crawlerLimbs,
+  crawler_head: crawlerHead,
+  bathorn_wings: bathornWings,
+  bathorn_head: bathornHead,
 };
 
 /**

@@ -125,6 +125,74 @@
     ]
   },
 
+  "_look2": "Тестові вигляди зі скетчу власника. Старі риги (earling, runner, brute) лишились на місці — перемикання одним полем rig у laneEnemies.json.",
+
+  "snowling": {
+    "hitbox": [1.5, 1.5],
+    "anchors": { "hit": [0, -0.75], "ground": [0, 0.6] },
+    "parts": [
+      {
+        "part": "snowling/body", "pos": [0, 0.25], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.05, "freq": 1.1 },
+          { "type": "bob", "amp": 0.04, "freq": 1.1 },
+          { "type": "recoil", "amp": 0.28, "dir": [-1, 0] }
+        ]
+      },
+      {
+        "part": "snowling/head", "parent": 0, "pos": [0, -0.72], "pivot": [0.5, 0.92], "pen": "red",
+        "mods": [
+          { "type": "sway", "amp": 6, "freq": 0.5 },
+          { "type": "bob", "amp": 0.03, "freq": 1.1, "phase": 0.18 }
+        ]
+      }
+    ]
+  },
+
+  "crawler": {
+    "hitbox": [1.1, 1.1],
+    "anchors": { "hit": [0, -0.45], "ground": [0, 0.45] },
+    "parts": [
+      {
+        "part": "crawler/limbs", "pos": [0, -0.3], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.09, "freq": 2.4 },
+          { "type": "bob", "amp": 0.08, "freq": 2.4 },
+          { "type": "recoil", "amp": 0.22, "dir": [-1, 0] }
+        ]
+      },
+      {
+        "part": "crawler/head", "parent": 0, "pos": [0, 0], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "sway", "amp": 10, "freq": 1.2 },
+          { "type": "bob", "amp": 0.04, "freq": 2.4, "phase": 0.2 }
+        ]
+      }
+    ]
+  },
+
+  "bathorn": {
+    "hitbox": [1.9, 1.9],
+    "anchors": { "hit": [0, -0.6], "ground": [0, 0.6] },
+    "parts": [
+      {
+        "part": "bathorn/wings", "pos": [0, -0.55], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.11, "freq": 0.55 },
+          { "type": "bob", "amp": 0.06, "freq": 0.55 },
+          { "type": "recoil", "amp": 0.3, "dir": [-1, 0] }
+        ]
+      },
+      {
+        "part": "bathorn/head", "parent": 0, "pos": [0, 0.05], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "sway", "amp": 3.5, "freq": 0.32 },
+          { "type": "bob", "amp": 0.03, "freq": 0.55, "phase": 0.3 }
+        ]
+      }
+    ]
+  },
+
   "tree": {
     "hitbox": [1, 1],
     "parts": [
