@@ -1,0 +1,42 @@
+{
+  "_": "Ростер шоуруму: які форми може взяти кожна роль ворога. rig — з rigs.json; роль — ключ laneEnemies.json. Вибір у шоурумі зберігається в localStorage (src/picks.ts) і перекриває laneEnemies.json#*.rig у грі; остаточний вибір переноситься в laneEnemies.json.",
+  "roles": [
+    {
+      "role": "earling", "title": "Звичайні", "hint": "базовий ворог, без бонусів",
+      "options": [
+        { "rig": "imp", "name": "Вухань" },
+        { "rig": "slime", "name": "Клякса" },
+        { "rig": "cyclops", "name": "Одноокий" },
+        { "rig": "mushroom", "name": "Грибник" },
+        { "rig": "ghost", "name": "Привид" }
+      ]
+    },
+    {
+      "role": "runner", "title": "Швидкі", "hint": "дрібні й прудкі, добігають до стрільців",
+      "options": [
+        { "rig": "spider", "name": "Павук" },
+        { "rig": "bat", "name": "Кажан" },
+        { "rig": "rat", "name": "Щур" },
+        { "rig": "beetle", "name": "Жук" }
+      ]
+    },
+    {
+      "role": "brute", "title": "Броньовані", "hint": "повільні, у броні — меч їх ледь бере",
+      "options": [
+        { "rig": "ogre", "name": "Огр у шоломі" },
+        { "rig": "knight", "name": "Лицар-відро" },
+        { "rig": "turtle", "name": "Черепаха" },
+        { "rig": "golem", "name": "Голем" }
+      ]
+    },
+    {
+      "role": "boss", "title": "Боси", "hint": "великий броньований у короні",
+      "options": [
+        { "rig": "ogre_king", "name": "Король-огр" },
+        { "rig": "knight_king", "name": "Король-лицар" },
+        { "rig": "turtle_king", "name": "Король-черепаха" },
+        { "rig": "golem_king", "name": "Король-голем" }
+      ]
+    }
+  ]
+}

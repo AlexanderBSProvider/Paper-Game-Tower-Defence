@@ -7,24 +7,24 @@
 
   "earling": {
     "_": "Вухань: базовий, без бонусів. Вигляд — сніговик зі скетчу; риг earling лишився для лабіринту.",
-    "rig": "snowling", "cls": "standard", "size": 1.5,
+    "rig": "imp", "cls": "standard", "size": 1.5,
     "hp": 40, "speed": 0.5, "damage": 5, "rate": 1.0, "reach": 0.6
   },
   "runner": {
     "_": "Бігун: дрібний і швидкий, добігає до стрільців раніше, ніж вони встигнуть його розстріляти.",
-    "rig": "crawler", "cls": "swift", "size": 1.1,
+    "rig": "spider", "cls": "swift", "size": 1.1,
     "hp": 18, "speed": 1.1, "damage": 3, "rate": 1.6, "reach": 0.5,
     "vs": { "ranged": 1.6 }
   },
   "brute": {
     "_": "Здоровань: повільний, броньований, б'є рідко й дуже боляче — ламає тих, хто стоїть упритул.",
-    "rig": "bathorn", "cls": "armored", "size": 1.9,
+    "rig": "ogre", "cls": "armored", "size": 1.9,
     "hp": 110, "speed": 0.3, "damage": 14, "rate": 0.5, "reach": 0.8,
     "vs": { "melee": 1.6 }
   },
   "boss": {
     "_": "Бос: рогатий король — намальований одразу великим (риг bathking), корона маркером між рогами. Лазер його не спалює, а відкидає й ранить на половину hp; над головою смуга життя. Виходить першим у хвилі з полем boss.",
-    "rig": "bathking", "cls": "armored", "size": 3.0, "boss": true,
+    "rig": "ogre_king", "cls": "armored", "size": 3.0, "boss": true,
     "hp": 600, "speed": 0.22, "damage": 28, "rate": 0.45, "reach": 1.1,
     "vs": { "melee": 1.3 }
   }

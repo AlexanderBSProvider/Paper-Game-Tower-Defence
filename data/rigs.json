@@ -125,283 +125,545 @@
     ]
   },
 
-  "_look2": "Вигляди зі скетчу власника, перемальовані (src/view/monsters.ts). Старі риги (earling, runner, brute) лишились на місці — перемикання одним полем rig у laneEnemies.json.",
-
-  "snowling": {
-    "_": "Сніговик-вухань: ноги крокують по черзі, рука-гілка замахується, очі кліпають, ніс-морквина вістрям туди, куди він іде.",
-    "hitbox": [1.5, 1.5],
-    "anchors": { "hit": [0, -0.75], "ground": [0, 0.6] },
-    "parts": [
-      {
-        "part": "snowling/foot", "pos": [0.2, 0.3], "pivot": [0.5, 0.5], "pen": "red",
-        "mods": [
-          { "type": "bob", "amp": -0.07, "freq": 2.2, "on": "walk", "phase": 0.5 }
-        ]
-      },
-      {
-        "part": "snowling/foot", "pos": [-0.2, 0.3], "pivot": [0.5, 0.5], "pen": "red",
-        "mods": [
-          { "type": "bob", "amp": -0.07, "freq": 2.2, "on": "walk", "phase": 0 }
-        ]
-      },
-      {
-        "part": "snowling/body", "pos": [0, 0.26], "pivot": [0.5, 1.0], "pen": "red",
-        "mods": [
-          { "type": "squash", "amp": 0.04, "freq": 1.1 },
-          { "type": "bob", "amp": 0.035, "freq": 4.4, "on": "walk", "phase": 0 },
-          { "type": "recoil", "amp": 0.25, "dir": [-1, 0] }
-        ]
-      },
-      {
-        "part": "snowling/head", "parent": 2, "pos": [-0.03, -0.8], "pivot": [0.5, 0.9], "pen": "red",
-        "mods": [
-          { "type": "sway", "amp": 5, "freq": 0.5 },
-          { "type": "bob", "amp": 0.03, "freq": 1.1, "phase": 0.2 }
-        ]
-      },
-      {
-        "part": "snowling/eyes", "parent": 3, "pos": [-0.07, -0.37], "pivot": [0.5, 0.5], "pen": "pencil",
-        "mods": [
-          { "type": "blink", "every": 3.2, "hold": 0.12 }
-        ]
-      },
-      { "part": "snowling/mouth", "parent": 3, "pos": [-0.06, -0.13], "pivot": [0.5, 0.5], "pen": "pencil" },
-      { "part": "snowling/nose", "parent": 3, "pos": [-0.18, -0.25], "pivot": [1.0, 0.5], "rot": 4, "pen": "orange" },
-      {
-        "part": "snowling/arm", "parent": 2, "pos": [-0.32, -0.5], "pivot": [0.95, 0.5], "rot": 20, "pen": "red",
-        "mods": [
-          { "type": "sway", "amp": 10, "freq": 0.8 },
-          { "type": "swing", "amp": -55 }
-        ]
-      }
-    ]
-  },
-  "crawler": {
-    "_": "Павучок-бігун: дві пари лап перебирають у протифазі, чотири ока маркером, ікла.",
-    "hitbox": [1.1, 1.1],
-    "anchors": { "hit": [0, -0.45], "ground": [0, 0.45] },
-    "parts": [
-      {
-        "part": "crawler/legs_b", "pos": [0.05, -0.05], "pivot": [0.5, 0.5], "pen": "red",
-        "mods": [
-          { "type": "bob", "amp": -0.06, "freq": 3.2, "on": "walk", "phase": 0.5 },
-          { "type": "sway", "amp": 6, "freq": 3.2, "on": "walk", "phase": 0.5 }
-        ]
-      },
-      {
-        "part": "crawler/body", "pos": [0.12, -0.05], "pivot": [0.5, 0.5], "pen": "red",
-        "mods": [
-          { "type": "squash", "amp": 0.06, "freq": 2.4 },
-          { "type": "bob", "amp": 0.03, "freq": 6.4, "on": "walk", "phase": 0 },
-          { "type": "recoil", "amp": 0.2, "dir": [-1, 0] }
-        ]
-      },
-      {
-        "part": "crawler/legs_a", "pos": [0.05, -0.05], "pivot": [0.5, 0.5], "pen": "red",
-        "mods": [
-          { "type": "bob", "amp": -0.06, "freq": 3.2, "on": "walk", "phase": 0 },
-          { "type": "sway", "amp": 6, "freq": 3.2, "on": "walk", "phase": 0 }
-        ]
-      },
-      {
-        "part": "crawler/head", "parent": 1, "pos": [-0.38, 0.04], "pivot": [0.6, 0.5], "pen": "red",
-        "mods": [
-          { "type": "sway", "amp": 8, "freq": 1.3 }
-        ]
-      },
-      { "part": "crawler/eyes", "parent": 3, "pos": [-0.07, -0.05], "pivot": [0.5, 0.5], "pen": "marker" },
-      {
-        "part": "crawler/pupils", "parent": 3, "pos": [-0.03, -0.074], "pivot": [0.5, 0.5], "pen": "pencil",
-        "mods": [
-          { "type": "blink", "every": 2.6, "hold": 0.1 }
-        ]
-      }
-    ]
-  },
-  "bathorn": {
-    "_": "Рогатий з крилами (варіант A, зі скетчу): крила махають, роги вигнуті, очі маркером.",
-    "hitbox": [1.9, 1.9],
-    "anchors": { "hit": [0, -1.0], "ground": [0, 0.55] },
-    "parts": [
-      {
-        "part": "bathorn/foot", "pos": [0.25, 0.35], "pivot": [0.5, 0.5], "pen": "red",
-        "mods": [
-          { "type": "bob", "amp": -0.06, "freq": 1.6, "on": "walk", "phase": 0.5 }
-        ]
-      },
-      {
-        "part": "bathorn/wing", "pos": [0.3, -0.38], "pivot": [0.92, 0.78], "flip": true, "pen": "red",
-        "mods": [
-          { "type": "sway", "amp": 12, "freq": 0.9, "phase": 0.5 }
-        ]
-      },
-      {
-        "part": "bathorn/body", "pos": [0.05, 0.32], "pivot": [0.5, 1.0], "pen": "red",
-        "mods": [
-          { "type": "squash", "amp": 0.03, "freq": 0.6 },
-          { "type": "bob", "amp": 0.03, "freq": 3.2, "on": "walk", "phase": 0 },
-          { "type": "recoil", "amp": 0.3, "dir": [-1, 0] }
-        ]
-      },
-      {
-        "part": "bathorn/head", "parent": 2, "pos": [-0.1, -0.92], "pivot": [0.5, 0.88], "pen": "red",
-        "mods": [
-          { "type": "sway", "amp": 3.5, "freq": 0.32 }
-        ]
-      },
-      { "part": "bathorn/eyes", "parent": 3, "pos": [-0.05, -0.37], "pivot": [0.5, 0.5], "pen": "marker" },
-      {
-        "part": "bathorn/pupils", "parent": 3, "pos": [-0.05, -0.37], "pivot": [0.5, 0.5], "pen": "pencil",
-        "mods": [
-          { "type": "blink", "every": 4, "hold": 0.12 }
-        ]
-      },
-      {
-        "part": "bathorn/wing", "pos": [-0.2, -0.38], "pivot": [0.92, 0.78], "pen": "red",
-        "mods": [
-          { "type": "sway", "amp": 12, "freq": 0.9 }
-        ]
-      },
-      {
-        "part": "bathorn/foot", "pos": [-0.2, 0.35], "pivot": [0.5, 0.5], "pen": "red",
-        "mods": [
-          { "type": "bob", "amp": -0.06, "freq": 1.6, "on": "walk", "phase": 0 }
-        ]
-      }
-    ]
-  },
-  "bathking": {
-    "_": "Бос (варіант A): той самий рогатий, намальований одразу великим, корона маркером між рогами.",
-    "hitbox": [3.23, 3.23],
-    "anchors": { "hit": [0.0, -1.7], "ground": [0.0, 0.935] },
-    "parts": [
-      {
-        "part": "bathking/foot", "pos": [0.425, 0.595], "pivot": [0.5, 0.5], "pen": "red",
-        "mods": [
-          { "type": "bob", "amp": -0.102, "freq": 1.6, "on": "walk", "phase": 0.5 }
-        ]
-      },
-      {
-        "part": "bathking/wing", "pos": [0.51, -0.646], "pivot": [0.92, 0.78], "flip": true, "pen": "red",
-        "mods": [
-          { "type": "sway", "amp": 12, "freq": 0.9, "phase": 0.5 }
-        ]
-      },
-      {
-        "part": "bathking/body", "pos": [0.085, 0.544], "pivot": [0.5, 1.0], "pen": "red",
-        "mods": [
-          { "type": "squash", "amp": 0.03, "freq": 0.6 },
-          { "type": "bob", "amp": 0.051, "freq": 3.2, "on": "walk", "phase": 0 },
-          { "type": "recoil", "amp": 0.51, "dir": [-1, 0] }
-        ]
-      },
-      {
-        "part": "bathking/head", "parent": 2, "pos": [-0.17, -1.564], "pivot": [0.5, 0.88], "pen": "red",
-        "mods": [
-          { "type": "sway", "amp": 3.5, "freq": 0.32 }
-        ]
-      },
-      { "part": "bathking/eyes", "parent": 3, "pos": [-0.085, -0.629], "pivot": [0.5, 0.5], "pen": "marker" },
-      {
-        "part": "bathking/pupils", "parent": 3, "pos": [-0.085, -0.629], "pivot": [0.5, 0.5], "pen": "pencil",
-        "mods": [
-          { "type": "blink", "every": 4, "hold": 0.12 }
-        ]
-      },
-      { "part": "bathking/crown_fill", "parent": 3, "pos": [-0.051, -1.054], "pivot": [0.5, 1.0], "pen": "marker" },
-      { "part": "bathking/crown_line", "parent": 3, "pos": [-0.051, -1.054], "pivot": [0.5, 1.0], "pen": "orange" },
-      {
-        "part": "bathking/wing", "pos": [-0.34, -0.646], "pivot": [0.92, 0.78], "pen": "red",
-        "mods": [
-          { "type": "sway", "amp": 12, "freq": 0.9 }
-        ]
-      },
-      {
-        "part": "bathking/foot", "pos": [-0.34, 0.595], "pivot": [0.5, 0.5], "pen": "red",
-        "mods": [
-          { "type": "bob", "amp": -0.102, "freq": 1.6, "on": "walk", "phase": 0 }
-        ]
-      }
-    ]
-  },
+  "_look2": "Бестіарій режиму lane — варіанти для шоуруму (showroom.html). Яку форму бере кожна роль, каже laneEnemies.json#*.rig; шоурум дозволяє перевизначити вибір для гри.",
   "imp": {
-    "_": "Варіант B — вухань-яйце: довгі вуха, великі очі-дірки (крізь них папір), два ікла, ніжки й лапка з кігтиками.",
+    "_": "Вухань: яйце з довгими вухами, що ростуть із контуру назовні; великі очі-дірки, два ікла, ступні під тілом, лапка збоку.",
     "hitbox": [1.5, 1.5],
-    "anchors": { "hit": [0, -0.75], "ground": [0, 0.55] },
+    "anchors": { "hit": [0, -0.75], "ground": [0, 0.5] },
     "parts": [
       {
-        "part": "imp/foot", "pos": [0.18, 0.32], "pivot": [0.5, 0.5], "pen": "red",
+        "part": "imp/foot", "pos": [0.192, 0.42], "pivot": [0.5, 0.5], "pen": "red",
         "mods": [
           { "type": "bob", "amp": -0.07, "freq": 2.2, "on": "walk", "phase": 0.5 }
         ]
       },
       {
-        "part": "imp/body", "pos": [0, 0.3], "pivot": [0.5, 1.0], "pen": "red",
+        "part": "imp/body", "pos": [0, 0.361], "pivot": [0.5, 1.0], "pen": "red",
         "mods": [
           { "type": "squash", "amp": 0.04, "freq": 1.2 },
           { "type": "bob", "amp": 0.035, "freq": 4.4, "on": "walk", "phase": 0 },
           { "type": "recoil", "amp": 0.25, "dir": [-1, 0] }
         ]
       },
+      { "part": "imp/pupils", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
       {
-        "part": "imp/pupils", "parent": 1, "pos": [-0.068, -0.58], "pivot": [0.5, 0.5], "pen": "pencil",
+        "part": "imp/paw", "pos": [-0.426, -0.378], "pivot": [0.97, 0.5], "rot": 12, "pen": "red", "parent": 1,
         "mods": [
-          { "type": "blink", "every": 3, "hold": 0.12 }
-        ]
-      },
-      {
-        "part": "imp/arm", "parent": 1, "pos": [-0.33, -0.38], "pivot": [0.95, 0.5], "rot": 15, "pen": "red",
-        "mods": [
-          { "type": "sway", "amp": 8, "freq": 0.9 },
+          { "type": "sway", "amp": 8, "freq": 0.9, "phase": 0 },
           { "type": "swing", "amp": -50 }
         ]
       },
       {
-        "part": "imp/foot", "pos": [-0.18, 0.32], "pivot": [0.5, 0.5], "pen": "red",
+        "part": "imp/foot", "pos": [-0.192, 0.42], "pivot": [0.5, 0.5], "pen": "red",
         "mods": [
-          { "type": "bob", "amp": -0.07, "freq": 2.2, "on": "walk", "phase": 0 }
+          { "type": "bob", "amp": -0.07, "freq": 2.2, "on": "walk", "phase": 0.5 }
+        ]
+      }
+    ]
+  },
+  "slime": {
+    "_": "Клякса: крапля без кінцівок, пересувається стрибками-стисканнями; очі-дірки, хвилястий рот.",
+    "hitbox": [1.5, 1.4],
+    "anchors": { "hit": [0, -0.7], "ground": [0, 0.5] },
+    "parts": [
+      {
+        "part": "slime/body", "pos": [0, 0.483], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.05, "freq": 1.1 },
+          { "type": "squash", "amp": 0.12, "freq": 2.2, "on": "walk" },
+          { "type": "bob", "amp": 0.06, "freq": 2.2, "on": "walk", "phase": 0.25 },
+          { "type": "recoil", "amp": 0.22, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "slime/pupils", "parent": 0, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" }
+    ]
+  },
+  "cyclops": {
+    "_": "Одноокий: куля з одним великим оком, вусики з кульками ростуть із контуру, зубастий рот.",
+    "hitbox": [1.5, 1.5],
+    "anchors": { "hit": [0, -0.75], "ground": [0, 0.5] },
+    "parts": [
+      {
+        "part": "cyclops/foot", "pos": [0.192, 0.42], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.07, "freq": 2.2, "on": "walk", "phase": 0.5 }
+        ]
+      },
+      {
+        "part": "cyclops/body", "pos": [0, 0.361], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.04, "freq": 1.0 },
+          { "type": "bob", "amp": 0.035, "freq": 4.4, "on": "walk", "phase": 0 },
+          { "type": "recoil", "amp": 0.25, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "cyclops/pupils", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      {
+        "part": "cyclops/paw", "pos": [-0.45, -0.378], "pivot": [0.97, 0.5], "rot": 12, "pen": "red", "parent": 1,
+        "mods": [
+          { "type": "sway", "amp": 8, "freq": 0.9, "phase": 0 },
+          { "type": "swing", "amp": -50 }
+        ]
+      },
+      {
+        "part": "cyclops/foot", "pos": [-0.192, 0.42], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.07, "freq": 2.2, "on": "walk", "phase": 0.5 }
+        ]
+      }
+    ]
+  },
+  "mushroom": {
+    "_": "Грибник: капелюх у плямах сидить на ніжці (торкаються лінією), обличчя на ніжці, ступні під нею.",
+    "hitbox": [1.5, 1.6],
+    "anchors": { "hit": [0, -0.8], "ground": [0, 0.5] },
+    "parts": [
+      {
+        "part": "mushroom/foot", "pos": [0.174, 0.41], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.07, "freq": 2.2, "on": "walk", "phase": 0.5 }
+        ]
+      },
+      {
+        "part": "mushroom/body", "pos": [0, 0.364], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "sway", "amp": 3, "freq": 0.6 },
+          { "type": "bob", "amp": 0.035, "freq": 4.4, "on": "walk", "phase": 0 },
+          { "type": "recoil", "amp": 0.22, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "mushroom/pupils", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      {
+        "part": "mushroom/foot", "pos": [-0.174, 0.41], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.07, "freq": 2.2, "on": "walk", "phase": 0.5 }
+        ]
+      }
+    ]
+  },
+  "ghost": {
+    "_": "Привид: одне простирадло з ручками-обрубками й хвилястим подолом, ширяє над землею; темні очі, рот «О».",
+    "hitbox": [1.5, 1.6],
+    "anchors": { "hit": [0, -0.8], "ground": [0, 0.5] },
+    "parts": [
+      {
+        "part": "ghost/body", "pos": [0, 0.37], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": 0.07, "freq": 0.9 },
+          { "type": "sway", "amp": 4, "freq": 0.7, "phase": 0 },
+          { "type": "recoil", "amp": 0.25, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "ghost/pupils", "parent": 0, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" }
+    ]
+  },
+  "spider": {
+    "_": "Павук: голова й черевце торкаються, шість лап починаються на контурі й ідуть лише назовні; дві трійки перебирають у протифазі.",
+    "hitbox": [1.1, 1.1],
+    "anchors": { "hit": [0, -0.55], "ground": [0, 0.5] },
+    "parts": [
+      {
+        "part": "spider/body", "pos": [0, 0.51], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.04, "freq": 2.4 },
+          { "type": "bob", "amp": 0.02, "freq": 10, "on": "walk", "phase": 0 },
+          { "type": "recoil", "amp": 0.2, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "spider/pupils", "parent": 0, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      {
+        "part": "spider/legs_a", "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "red", "parent": 0,
+        "mods": [
+          { "type": "bob", "amp": -0.035, "freq": 5.0, "on": "walk", "phase": 0 },
+          { "type": "sway", "amp": 3, "freq": 5.0, "phase": 0, "on": "walk" }
+        ]
+      },
+      {
+        "part": "spider/legs_b", "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "red", "parent": 0,
+        "mods": [
+          { "type": "bob", "amp": -0.035, "freq": 5.0, "on": "walk", "phase": 0.5 },
+          { "type": "sway", "amp": 3, "freq": 5.0, "phase": 0.5, "on": "walk" }
+        ]
+      }
+    ]
+  },
+  "bat": {
+    "_": "Кажан: кругле тільце з вухами-виростами, крила кріпляться збоку на контурі й махають; летить над землею.",
+    "hitbox": [1.2, 1.1],
+    "anchors": { "hit": [0, -0.55], "ground": [0, 0.5] },
+    "parts": [
+      {
+        "part": "bat/body", "pos": [0, 0.27], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": 0.08, "freq": 1.6 },
+          { "type": "recoil", "amp": 0.2, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "bat/pupils", "parent": 0, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      {
+        "part": "bat/wing", "pos": [-0.29, -0.45], "pivot": [0.97, 0.45], "pen": "red", "parent": 0,
+        "mods": [
+          { "type": "sway", "amp": 22, "freq": 3.2, "phase": 0 }
+        ]
+      },
+      {
+        "part": "bat/wing", "pos": [0.29, -0.45], "pivot": [0.97, 0.45], "flip": true, "pen": "red", "parent": 0,
+        "mods": [
+          { "type": "sway", "amp": 22, "freq": 3.2, "phase": 0.5 }
+        ]
+      }
+    ]
+  },
+  "rat": {
+    "_": "Щур: тіло, морда й вухо — вирости з контуру, хвіст кріпиться ззаду й хитається, лапки під черевом.",
+    "hitbox": [1.1, 1.0],
+    "anchors": { "hit": [0, -0.5], "ground": [0, 0.5] },
+    "parts": [
+      {
+        "part": "rat/body", "pos": [0, 0.509], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.03, "freq": 2.4 },
+          { "type": "bob", "amp": 0.02, "freq": 12, "on": "walk", "phase": 0 },
+          { "type": "recoil", "amp": 0.2, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "rat/pupils", "parent": 0, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      {
+        "part": "rat/legs_a", "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "red", "parent": 0,
+        "mods": [
+          { "type": "bob", "amp": -0.03, "freq": 6.0, "on": "walk", "phase": 0 },
+          { "type": "sway", "amp": 3, "freq": 6.0, "phase": 0, "on": "walk" }
+        ]
+      },
+      {
+        "part": "rat/legs_b", "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "red", "parent": 0,
+        "mods": [
+          { "type": "bob", "amp": -0.03, "freq": 6.0, "on": "walk", "phase": 0.5 },
+          { "type": "sway", "amp": 3, "freq": 6.0, "phase": 0.5, "on": "walk" }
+        ]
+      },
+      {
+        "part": "rat/tail", "pos": [0.52, -0.36], "pivot": [0.03, 0.7], "pen": "red", "parent": 0,
+        "mods": [
+          { "type": "sway", "amp": 12, "freq": 2.0, "phase": 0 }
+        ]
+      }
+    ]
+  },
+  "beetle": {
+    "_": "Жук: панцир у плямах, голова торкається спереду, вусики ростуть із голови назовні, шість лапок під панцирем.",
+    "hitbox": [1.1, 1.1],
+    "anchors": { "hit": [0, -0.55], "ground": [0, 0.5] },
+    "parts": [
+      {
+        "part": "beetle/body", "pos": [0, 0.51], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.03, "freq": 2.0 },
+          { "type": "bob", "amp": 0.02, "freq": 10, "on": "walk", "phase": 0 },
+          { "type": "recoil", "amp": 0.2, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "beetle/pupils", "parent": 0, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      {
+        "part": "beetle/legs_a", "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "red", "parent": 0,
+        "mods": [
+          { "type": "bob", "amp": -0.035, "freq": 5.0, "on": "walk", "phase": 0 },
+          { "type": "sway", "amp": 3, "freq": 5.0, "phase": 0, "on": "walk" }
+        ]
+      },
+      {
+        "part": "beetle/legs_b", "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "red", "parent": 0,
+        "mods": [
+          { "type": "bob", "amp": -0.035, "freq": 5.0, "on": "walk", "phase": 0.5 },
+          { "type": "sway", "amp": 3, "freq": 5.0, "phase": 0.5, "on": "walk" }
         ]
       }
     ]
   },
   "ogre": {
-    "_": "Варіант B — здоровань у шоломі: широкий, ікла знизу, залізна каска з ріжками (саме вона каже «броньований»), суковата дубина.",
+    "_": "Огр у шоломі: шолом вирізаний із тіла й намальований олівцем (він і каже «броньований»), ріжки ростуть із шолома назовні, дубина збоку.",
     "hitbox": [1.9, 1.9],
-    "anchors": { "hit": [0, -1.0], "ground": [0, 0.55] },
+    "anchors": { "hit": [0, -0.95], "ground": [0, 0.5] },
     "parts": [
       {
-        "part": "ogre/foot", "pos": [0.28, 0.36], "pivot": [0.5, 0.5], "pen": "red",
+        "part": "ogre/foot", "pos": [0.256, 0.44], "pivot": [0.5, 0.5], "pen": "red",
         "mods": [
           { "type": "bob", "amp": -0.06, "freq": 1.6, "on": "walk", "phase": 0.5 }
         ]
       },
       {
-        "part": "ogre/body", "pos": [0, 0.34], "pivot": [0.5, 1.0], "pen": "red",
+        "part": "ogre/body", "pos": [0, 0.37], "pivot": [0.5, 1.0], "pen": "red",
         "mods": [
           { "type": "squash", "amp": 0.03, "freq": 0.6 },
           { "type": "bob", "amp": 0.03, "freq": 3.2, "on": "walk", "phase": 0 },
           { "type": "recoil", "amp": 0.3, "dir": [-1, 0] }
         ]
       },
+      { "part": "ogre/helmet", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      { "part": "ogre/pupils", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
       {
-        "part": "ogre/pupils", "parent": 1, "pos": [-0.124, -0.72], "pivot": [0.5, 0.5], "pen": "pencil",
+        "part": "ogre/club", "pos": [-0.664, -0.528], "pivot": [0.97, 0.52], "rot": -25, "pen": "red", "parent": 1,
         "mods": [
-          { "type": "blink", "every": 4, "hold": 0.12 }
-        ]
-      },
-      { "part": "ogre/horns", "parent": 1, "pos": [0, -1.12], "pivot": [0.5, 1.0], "pen": "red" },
-      { "part": "ogre/helmet", "parent": 1, "pos": [0, -0.86], "pivot": [0.5, 0.95], "pen": "pencil" },
-      {
-        "part": "ogre/club", "parent": 1, "pos": [-0.55, -0.6], "pivot": [0.95, 0.55], "rot": -30, "pen": "red",
-        "mods": [
-          { "type": "sway", "amp": 4, "freq": 0.5 },
+          { "type": "sway", "amp": 4, "freq": 0.5, "phase": 0 },
           { "type": "swing", "amp": -70 }
         ]
       },
       {
-        "part": "ogre/foot", "pos": [-0.25, 0.36], "pivot": [0.5, 0.5], "pen": "red",
+        "part": "ogre/foot", "pos": [-0.256, 0.44], "pivot": [0.5, 0.5], "pen": "red",
         "mods": [
-          { "type": "bob", "amp": -0.06, "freq": 1.6, "on": "walk", "phase": 0 }
+          { "type": "bob", "amp": -0.06, "freq": 1.6, "on": "walk", "phase": 0.5 }
+        ]
+      }
+    ]
+  },
+  "knight": {
+    "_": "Лицар-відро: тулуб, відро-шолом олівцем стоїть на тулубі, у візорі жарини маркером, плюмаж росте з відра, щит торкається тулуба збоку.",
+    "hitbox": [1.9, 1.9],
+    "anchors": { "hit": [0, -0.95], "ground": [0, 0.5] },
+    "parts": [
+      {
+        "part": "knight/foot", "pos": [0.224, 0.42], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.06, "freq": 1.8, "on": "walk", "phase": 0.5 }
+        ]
+      },
+      {
+        "part": "knight/body", "pos": [0, 0.422], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": 0.03, "freq": 3.6, "on": "walk", "phase": 0 },
+          { "type": "recoil", "amp": 0.3, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "knight/helmet", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      { "part": "knight/glow", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "marker" },
+      {
+        "part": "knight/shield", "pos": [-0.399, -0.476], "pivot": [0.97, 0.5], "pen": "pencil", "parent": 1,
+        "mods": [
+          { "type": "sway", "amp": 3, "freq": 0.6, "phase": 0 },
+          { "type": "recoil", "amp": 0.15, "dir": [-1, 0] }
+        ]
+      },
+      {
+        "part": "knight/foot", "pos": [-0.224, 0.42], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.06, "freq": 1.8, "on": "walk", "phase": 0.5 }
+        ]
+      }
+    ]
+  },
+  "turtle": {
+    "_": "Черепаха: панцир олівцем лежить на череві (торкаються лінією), голова окремо спереду, ступні під черевом.",
+    "hitbox": [1.9, 1.6],
+    "anchors": { "hit": [0, -0.8], "ground": [0, 0.5] },
+    "parts": [
+      {
+        "part": "turtle/foot", "pos": [0.532, 0.43], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.05, "freq": 1.6, "on": "walk", "phase": 0.5 }
+        ]
+      },
+      {
+        "part": "turtle/body", "pos": [0, 0.658], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": 0.025, "freq": 3.2, "on": "walk", "phase": 0 },
+          { "type": "sway", "amp": 1.5, "freq": 0.4, "phase": 0 },
+          { "type": "recoil", "amp": 0.25, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "turtle/shell", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      { "part": "turtle/pupils", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      {
+        "part": "turtle/foot", "pos": [-0.152, 0.43], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.05, "freq": 1.6, "on": "walk", "phase": 0.5 }
+        ]
+      }
+    ]
+  },
+  "golem": {
+    "_": "Голем: брили торкаються гранями (голова на тулубі, руки звисають із плечей убік), очі-жарини маркером.",
+    "hitbox": [1.9, 2.0],
+    "anchors": { "hit": [0, -1.0], "ground": [0, 0.5] },
+    "parts": [
+      {
+        "part": "golem/foot", "pos": [0.238, 0.43], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.05, "freq": 1.4, "on": "walk", "phase": 0.5 }
+        ]
+      },
+      {
+        "part": "golem/body", "pos": [0, 0.464], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": 0.025, "freq": 2.8, "on": "walk", "phase": 0 },
+          { "type": "recoil", "amp": 0.3, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "golem/glow", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "marker" },
+      {
+        "part": "golem/arm", "pos": [-0.485, -1.044], "pivot": [0.92, 0.06], "pen": "red", "parent": 1,
+        "mods": [
+          { "type": "sway", "amp": 5, "freq": 0.6, "phase": 0 },
+          { "type": "swing", "amp": -40 }
+        ]
+      },
+      {
+        "part": "golem/arm", "pos": [0.485, -1.044], "pivot": [0.92, 0.06], "flip": true, "pen": "red", "parent": 1,
+        "mods": [
+          { "type": "sway", "amp": 5, "freq": 0.6, "phase": 0.5 }
+        ]
+      },
+      {
+        "part": "golem/foot", "pos": [-0.272, 0.43], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.05, "freq": 1.4, "on": "walk", "phase": 0.5 }
+        ]
+      }
+    ]
+  },
+  "ogre_king": {
+    "_": "Бос: Огр у шоломі: шолом вирізаний із тіла й намальований олівцем (він і каже «броньований»), ріжки ростуть із шолома назовні, дубина збоку.",
+    "hitbox": [3.23, 3.23],
+    "anchors": { "hit": [0, -1.615], "ground": [0, 0.85] },
+    "parts": [
+      {
+        "part": "ogre_king/foot", "pos": [0.435, 0.748], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.102, "freq": 1.6, "on": "walk", "phase": 0.5 }
+        ]
+      },
+      {
+        "part": "ogre_king/body", "pos": [0, 0.628], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.03, "freq": 0.6 },
+          { "type": "bob", "amp": 0.03, "freq": 3.2, "on": "walk", "phase": 0 },
+          { "type": "recoil", "amp": 0.3, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "ogre_king/helmet", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      { "part": "ogre_king/pupils", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      {
+        "part": "ogre_king/club", "pos": [-1.129, -0.898], "pivot": [0.97, 0.52], "rot": -25, "pen": "red", "parent": 1,
+        "mods": [
+          { "type": "sway", "amp": 4, "freq": 0.5, "phase": 0 },
+          { "type": "swing", "amp": -70 }
+        ]
+      },
+      { "part": "ogre_king/crown_fill", "pos": [0.0, -1.963], "pivot": [0.5, 1.0], "pen": "marker", "parent": 1 },
+      { "part": "ogre_king/crown_line", "pos": [0.0, -1.963], "pivot": [0.5, 1.0], "pen": "orange", "parent": 1 },
+      {
+        "part": "ogre_king/foot", "pos": [-0.435, 0.748], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.102, "freq": 1.6, "on": "walk", "phase": 0.5 }
+        ]
+      }
+    ]
+  },
+  "knight_king": {
+    "_": "Бос: Лицар-відро: тулуб, відро-шолом олівцем стоїть на тулубі, у візорі жарини маркером, плюмаж росте з відра, щит торкається тулуба збоку.",
+    "hitbox": [3.23, 3.23],
+    "anchors": { "hit": [0, -1.615], "ground": [0, 0.85] },
+    "parts": [
+      {
+        "part": "knight_king/foot", "pos": [0.381, 0.714], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.102, "freq": 1.8, "on": "walk", "phase": 0.5 }
+        ]
+      },
+      {
+        "part": "knight_king/body", "pos": [0, 0.717], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": 0.03, "freq": 3.6, "on": "walk", "phase": 0 },
+          { "type": "recoil", "amp": 0.3, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "knight_king/helmet", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      { "part": "knight_king/glow", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "marker" },
+      {
+        "part": "knight_king/shield", "pos": [-0.678, -0.809], "pivot": [0.97, 0.5], "pen": "pencil", "parent": 1,
+        "mods": [
+          { "type": "sway", "amp": 3, "freq": 0.6, "phase": 0 },
+          { "type": "recoil", "amp": 0.15, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "knight_king/crown_fill", "pos": [0.0, -2.876], "pivot": [0.5, 1.0], "pen": "marker", "parent": 1 },
+      { "part": "knight_king/crown_line", "pos": [0.0, -2.876], "pivot": [0.5, 1.0], "pen": "orange", "parent": 1 },
+      {
+        "part": "knight_king/foot", "pos": [-0.381, 0.714], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.102, "freq": 1.8, "on": "walk", "phase": 0.5 }
+        ]
+      }
+    ]
+  },
+  "turtle_king": {
+    "_": "Бос: Черепаха: панцир олівцем лежить на череві (торкаються лінією), голова окремо спереду, ступні під черевом.",
+    "hitbox": [3.23, 2.72],
+    "anchors": { "hit": [0, -1.36], "ground": [0, 0.85] },
+    "parts": [
+      {
+        "part": "turtle_king/foot", "pos": [0.904, 0.731], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.085, "freq": 1.6, "on": "walk", "phase": 0.5 }
+        ]
+      },
+      {
+        "part": "turtle_king/body", "pos": [0, 1.119], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": 0.025, "freq": 3.2, "on": "walk", "phase": 0 },
+          { "type": "sway", "amp": 1.5, "freq": 0.4, "phase": 0 },
+          { "type": "recoil", "amp": 0.25, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "turtle_king/shell", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      { "part": "turtle_king/pupils", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "pencil" },
+      { "part": "turtle_king/crown_fill", "pos": [-1.163, -1.337], "pivot": [0.5, 1.0], "pen": "marker", "parent": 1 },
+      { "part": "turtle_king/crown_line", "pos": [-1.163, -1.337], "pivot": [0.5, 1.0], "pen": "orange", "parent": 1 },
+      {
+        "part": "turtle_king/foot", "pos": [-0.258, 0.731], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.085, "freq": 1.6, "on": "walk", "phase": 0.5 }
+        ]
+      }
+    ]
+  },
+  "golem_king": {
+    "_": "Бос: Голем: брили торкаються гранями (голова на тулубі, руки звисають із плечей убік), очі-жарини маркером.",
+    "hitbox": [3.23, 3.4],
+    "anchors": { "hit": [0, -1.7], "ground": [0, 0.85] },
+    "parts": [
+      {
+        "part": "golem_king/foot", "pos": [0.405, 0.731], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.085, "freq": 1.4, "on": "walk", "phase": 0.5 }
+        ]
+      },
+      {
+        "part": "golem_king/body", "pos": [0, 0.789], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": 0.025, "freq": 2.8, "on": "walk", "phase": 0 },
+          { "type": "recoil", "amp": 0.3, "dir": [-1, 0] }
+        ]
+      },
+      { "part": "golem_king/glow", "parent": 1, "pos": [0, 0], "pivot": [0.5, 1.0], "pen": "marker" },
+      {
+        "part": "golem_king/arm", "pos": [-0.824, -1.775], "pivot": [0.92, 0.06], "pen": "red", "parent": 1,
+        "mods": [
+          { "type": "sway", "amp": 5, "freq": 0.6, "phase": 0 },
+          { "type": "swing", "amp": -40 }
+        ]
+      },
+      {
+        "part": "golem_king/arm", "pos": [0.824, -1.775], "pivot": [0.92, 0.06], "flip": true, "pen": "red", "parent": 1,
+        "mods": [
+          { "type": "sway", "amp": 5, "freq": 0.6, "phase": 0.5 }
+        ]
+      },
+      { "part": "golem_king/crown_fill", "pos": [-0.029, -2.739], "pivot": [0.5, 1.0], "pen": "marker", "parent": 1 },
+      { "part": "golem_king/crown_line", "pos": [-0.029, -2.739], "pivot": [0.5, 1.0], "pen": "orange", "parent": 1 },
+      {
+        "part": "golem_king/foot", "pos": [-0.462, 0.731], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.085, "freq": 1.4, "on": "walk", "phase": 0.5 }
         ]
       }
     ]

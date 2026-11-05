@@ -21,6 +21,7 @@ import { createTracePad } from './controller/tracepad.js';
 import { createWorkshop } from './controller/workshop.js';
 import { createShelf } from './controller/shelfDom.js';
 import { createCampaign, initialSelection } from './laneCampaign.js';
+import { applyPicks } from './picks.js';
 import type { CampaignData } from './model/campaign.js';
 import type { BuildingsData } from './model/buildings.js';
 import type { LaneEnemies, LaneLevel } from './model/lane.js';
@@ -122,6 +123,8 @@ const tracePad = createTracePad({
 resizers.push((L) => tracePad.resize(L));
 
 if (lane) {
+  // Форми ворогів, обрані в шоурумі (showroom.html), перекривають laneEnemies.json.
+  applyPicks(laneEnemies!, rigDefs);
   // Полиця трафаретів — DOM: назви й підказки, які перо намалювати не вміє.
   const shelf = createShelf();
   // Кампанія сама збирає й прибирає сесії рівнів: гра, HUD, панель виклику.

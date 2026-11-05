@@ -1464,4 +1464,23 @@ const enemyIds = Object.keys(EN).filter((k) => !k.startsWith('_'));
   assert.deepEqual(back, pr, 'прогрес не пережив запис і читання');
 }
 
+// --- бестіарій і шоурум ---------------------------------------------------------
+// Шоурум пропонує форми з data/bestiary.json; тихо ламається тут ось що: варіант
+// без рига (картка порожня), роль, якої немає в laneEnemies (вибір нікуди не
+// дійде), або стартова форма ролі, якої немає серед варіантів шоуруму.
+{
+  const BS = JSON.parse(readFileSync(root + 'data/bestiary.json', 'utf8'));
+  const RG = JSON.parse(readFileSync(root + 'data/rigs.json', 'utf8'));
+  for (const r of BS.roles) {
+    assert.ok(EN[r.role], `шоурум: ролі ${r.role} немає в laneEnemies.json`);
+    assert.ok(r.options.length >= 2, `шоурум: у ролі ${r.role} нема з чого обирати`);
+    for (const o of r.options) assert.ok(RG[o.rig], `шоурум: ${r.role} → ригу ${o.rig} немає`);
+    assert.ok(r.options.some((o) => o.rig === EN[r.role].rig), `шоурум: стартової форми ${EN[r.role].rig} ролі ${r.role} немає серед варіантів`);
+  }
+  // Боси — ті самі броньовані, лише в короні: король для кожного броньованого.
+  const brutes = BS.roles.find((r) => r.role === 'brute').options.map((o) => o.rig);
+  const bosses = BS.roles.find((r) => r.role === 'boss').options.map((o) => o.rig);
+  for (const b of brutes) assert.ok(bosses.includes(b + '_king'), `немає боса-версії для ${b}`);
+}
+
 console.log('selfcheck: ok');
