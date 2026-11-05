@@ -37,8 +37,8 @@
   "snowling/eyes":          { "file": "proc:snow_eyes", "size": [0.56, 0.26], "line": 0.04 },
   "snowling/mouth":         { "file": "proc:snow_mouth", "size": [0.42, 0.2], "line": 0.035 },
   "snowling/nose":          { "file": "proc:snow_nose", "size": [0.34, 0.14], "line": 0.035 },
-  "crawler/legs_a":         { "file": "proc:crawl_legs_a", "size": [1.45, 0.85], "line": 0.042 },
-  "crawler/legs_b":         { "file": "proc:crawl_legs_b", "size": [1.45, 0.85], "line": 0.042 },
+  "crawler/legs_a":         { "file": "proc:crawl_legs_a", "size": [2.0, 0.95], "line": 0.042 },
+  "crawler/legs_b":         { "file": "proc:crawl_legs_b", "size": [2.0, 0.95], "line": 0.042 },
   "crawler/body":           { "file": "proc:crawl_body", "size": [0.85, 0.62], "line": 0.045 },
   "crawler/head":           { "file": "proc:crawl_head", "size": [0.55, 0.55], "line": 0.045 },
   "crawler/eyes":           { "file": "proc:crawl_eyes", "size": [0.36, 0.2], "line": 0.03 },
@@ -60,5 +60,15 @@
   "bathking/club":          { "file": "proc:horn_club", "size": [1.7, 0.85], "line": 0.085 },
   "bathking/foot":          { "file": "proc:horn_foot", "size": [0.714, 0.408], "line": 0.0765 },
   "bathking/crown_fill":    { "file": "proc:crown_fill", "size": [1.05, 0.62], "line": 0.051 },
-  "bathking/crown_line":    { "file": "proc:crown_line", "size": [1.05, 0.62], "line": 0.051 }
+  "bathking/crown_line":    { "file": "proc:crown_line", "size": [1.05, 0.62], "line": 0.051 },
+  "imp/body":               { "file": "proc:imp_body", "size": [1.1, 1.35], "line": 0.05 },
+  "imp/pupils":             { "file": "proc:imp_pupils", "size": [0.36, 0.2], "line": 0.03 },
+  "imp/foot":               { "file": "proc:imp_foot", "size": [0.34, 0.2], "line": 0.045 },
+  "imp/arm":                { "file": "proc:imp_arm", "size": [0.5, 0.32], "line": 0.045 },
+  "ogre/body":              { "file": "proc:ogre_body", "size": [1.5, 1.45], "line": 0.055 },
+  "ogre/pupils":            { "file": "proc:ogre_pupils", "size": [0.5, 0.2], "line": 0.03 },
+  "ogre/helmet":            { "file": "proc:ogre_helmet", "size": [1.0, 0.5], "line": 0.05 },
+  "ogre/horns":             { "file": "proc:ogre_horns", "size": [1.1, 0.5], "line": 0.05 },
+  "ogre/club":              { "file": "proc:ogre_club", "size": [1.0, 0.42], "line": 0.05 },
+  "ogre/foot":              { "file": "proc:ogre_foot", "size": [0.42, 0.24], "line": 0.045 }
 }

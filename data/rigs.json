@@ -182,7 +182,7 @@
     "anchors": { "hit": [0, -0.45], "ground": [0, 0.45] },
     "parts": [
       {
-        "part": "crawler/legs_b", "pos": [0, -0.02], "pivot": [0.5, 0.42], "pen": "red",
+        "part": "crawler/legs_b", "pos": [0.05, -0.05], "pivot": [0.5, 0.5], "pen": "red",
         "mods": [
           { "type": "bob", "amp": -0.06, "freq": 3.2, "on": "walk", "phase": 0.5 },
           { "type": "sway", "amp": 6, "freq": 3.2, "on": "walk", "phase": 0.5 }
@@ -197,7 +197,7 @@
         ]
       },
       {
-        "part": "crawler/legs_a", "pos": [0, -0.02], "pivot": [0.5, 0.42], "pen": "red",
+        "part": "crawler/legs_a", "pos": [0.05, -0.05], "pivot": [0.5, 0.5], "pen": "red",
         "mods": [
           { "type": "bob", "amp": -0.06, "freq": 3.2, "on": "walk", "phase": 0 },
           { "type": "sway", "amp": 6, "freq": 3.2, "on": "walk", "phase": 0 }
@@ -211,7 +211,7 @@
       },
       { "part": "crawler/eyes", "parent": 3, "pos": [-0.07, -0.05], "pivot": [0.5, 0.5], "pen": "marker" },
       {
-        "part": "crawler/pupils", "parent": 3, "pos": [-0.07, -0.05], "pivot": [0.5, 0.5], "pen": "pencil",
+        "part": "crawler/pupils", "parent": 3, "pos": [-0.03, -0.074], "pivot": [0.5, 0.5], "pen": "pencil",
         "mods": [
           { "type": "blink", "every": 2.6, "hold": 0.1 }
         ]
@@ -219,7 +219,7 @@
     ]
   },
   "bathorn": {
-    "_": "Рогатий здоровань: крила махають, броня олівцем (нагрудник, наплічник із шипами), шипаста палиця замахується.",
+    "_": "Рогатий з крилами (варіант A, зі скетчу): крила махають, роги вигнуті, очі маркером.",
     "hitbox": [1.9, 1.9],
     "anchors": { "hit": [0, -1.0], "ground": [0, 0.55] },
     "parts": [
@@ -243,16 +243,15 @@
           { "type": "recoil", "amp": 0.3, "dir": [-1, 0] }
         ]
       },
-      { "part": "bathorn/armor", "parent": 2, "pos": [-0.05, -0.62], "pivot": [0.5, 0.5], "pen": "pencil" },
       {
         "part": "bathorn/head", "parent": 2, "pos": [-0.1, -0.92], "pivot": [0.5, 0.88], "pen": "red",
         "mods": [
           { "type": "sway", "amp": 3.5, "freq": 0.32 }
         ]
       },
-      { "part": "bathorn/eyes", "parent": 4, "pos": [-0.05, -0.37], "pivot": [0.5, 0.5], "pen": "marker" },
+      { "part": "bathorn/eyes", "parent": 3, "pos": [-0.05, -0.37], "pivot": [0.5, 0.5], "pen": "marker" },
       {
-        "part": "bathorn/pupils", "parent": 4, "pos": [-0.05, -0.37], "pivot": [0.5, 0.5], "pen": "pencil",
+        "part": "bathorn/pupils", "parent": 3, "pos": [-0.05, -0.37], "pivot": [0.5, 0.5], "pen": "pencil",
         "mods": [
           { "type": "blink", "every": 4, "hold": 0.12 }
         ]
@@ -264,13 +263,6 @@
         ]
       },
       {
-        "part": "bathorn/club", "parent": 2, "pos": [-0.45, -0.5], "pivot": [0.95, 0.55], "rot": -35, "pen": "red",
-        "mods": [
-          { "type": "sway", "amp": 4, "freq": 0.5 },
-          { "type": "swing", "amp": -70 }
-        ]
-      },
-      {
         "part": "bathorn/foot", "pos": [-0.2, 0.35], "pivot": [0.5, 0.5], "pen": "red",
         "mods": [
           { "type": "bob", "amp": -0.06, "freq": 1.6, "on": "walk", "phase": 0 }
@@ -279,7 +271,7 @@
     ]
   },
   "bathking": {
-    "_": "Бос: той самий рогатий, але намальований одразу великим (а не розтягнутим) і з короною маркером між рогами.",
+    "_": "Бос (варіант A): той самий рогатий, намальований одразу великим, корона маркером між рогами.",
     "hitbox": [3.23, 3.23],
     "anchors": { "hit": [0.0, -1.7], "ground": [0.0, 0.935] },
     "parts": [
@@ -303,22 +295,21 @@
           { "type": "recoil", "amp": 0.51, "dir": [-1, 0] }
         ]
       },
-      { "part": "bathking/armor", "parent": 2, "pos": [-0.085, -1.054], "pivot": [0.5, 0.5], "pen": "pencil" },
       {
         "part": "bathking/head", "parent": 2, "pos": [-0.17, -1.564], "pivot": [0.5, 0.88], "pen": "red",
         "mods": [
           { "type": "sway", "amp": 3.5, "freq": 0.32 }
         ]
       },
-      { "part": "bathking/eyes", "parent": 4, "pos": [-0.085, -0.629], "pivot": [0.5, 0.5], "pen": "marker" },
+      { "part": "bathking/eyes", "parent": 3, "pos": [-0.085, -0.629], "pivot": [0.5, 0.5], "pen": "marker" },
       {
-        "part": "bathking/pupils", "parent": 4, "pos": [-0.085, -0.629], "pivot": [0.5, 0.5], "pen": "pencil",
+        "part": "bathking/pupils", "parent": 3, "pos": [-0.085, -0.629], "pivot": [0.5, 0.5], "pen": "pencil",
         "mods": [
           { "type": "blink", "every": 4, "hold": 0.12 }
         ]
       },
-      { "part": "bathking/crown_fill", "parent": 4, "pos": [-0.051, -1.05], "pivot": [0.5, 1.0], "pen": "marker" },
-      { "part": "bathking/crown_line", "parent": 4, "pos": [-0.051, -1.05], "pivot": [0.5, 1.0], "pen": "orange" },
+      { "part": "bathking/crown_fill", "parent": 3, "pos": [-0.051, -1.054], "pivot": [0.5, 1.0], "pen": "marker" },
+      { "part": "bathking/crown_line", "parent": 3, "pos": [-0.051, -1.054], "pivot": [0.5, 1.0], "pen": "orange" },
       {
         "part": "bathking/wing", "pos": [-0.34, -0.646], "pivot": [0.92, 0.78], "pen": "red",
         "mods": [
@@ -326,16 +317,91 @@
         ]
       },
       {
-        "part": "bathking/club", "parent": 2, "pos": [-0.765, -0.85], "pivot": [0.95, 0.55], "rot": -35, "pen": "red",
+        "part": "bathking/foot", "pos": [-0.34, 0.595], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.102, "freq": 1.6, "on": "walk", "phase": 0 }
+        ]
+      }
+    ]
+  },
+  "imp": {
+    "_": "Варіант B — вухань-яйце: довгі вуха, великі очі-дірки (крізь них папір), два ікла, ніжки й лапка з кігтиками.",
+    "hitbox": [1.5, 1.5],
+    "anchors": { "hit": [0, -0.75], "ground": [0, 0.55] },
+    "parts": [
+      {
+        "part": "imp/foot", "pos": [0.18, 0.32], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.07, "freq": 2.2, "on": "walk", "phase": 0.5 }
+        ]
+      },
+      {
+        "part": "imp/body", "pos": [0, 0.3], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.04, "freq": 1.2 },
+          { "type": "bob", "amp": 0.035, "freq": 4.4, "on": "walk", "phase": 0 },
+          { "type": "recoil", "amp": 0.25, "dir": [-1, 0] }
+        ]
+      },
+      {
+        "part": "imp/pupils", "parent": 1, "pos": [-0.068, -0.58], "pivot": [0.5, 0.5], "pen": "pencil",
+        "mods": [
+          { "type": "blink", "every": 3, "hold": 0.12 }
+        ]
+      },
+      {
+        "part": "imp/arm", "parent": 1, "pos": [-0.33, -0.38], "pivot": [0.95, 0.5], "rot": 15, "pen": "red",
+        "mods": [
+          { "type": "sway", "amp": 8, "freq": 0.9 },
+          { "type": "swing", "amp": -50 }
+        ]
+      },
+      {
+        "part": "imp/foot", "pos": [-0.18, 0.32], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.07, "freq": 2.2, "on": "walk", "phase": 0 }
+        ]
+      }
+    ]
+  },
+  "ogre": {
+    "_": "Варіант B — здоровань у шоломі: широкий, ікла знизу, залізна каска з ріжками (саме вона каже «броньований»), суковата дубина.",
+    "hitbox": [1.9, 1.9],
+    "anchors": { "hit": [0, -1.0], "ground": [0, 0.55] },
+    "parts": [
+      {
+        "part": "ogre/foot", "pos": [0.28, 0.36], "pivot": [0.5, 0.5], "pen": "red",
+        "mods": [
+          { "type": "bob", "amp": -0.06, "freq": 1.6, "on": "walk", "phase": 0.5 }
+        ]
+      },
+      {
+        "part": "ogre/body", "pos": [0, 0.34], "pivot": [0.5, 1.0], "pen": "red",
+        "mods": [
+          { "type": "squash", "amp": 0.03, "freq": 0.6 },
+          { "type": "bob", "amp": 0.03, "freq": 3.2, "on": "walk", "phase": 0 },
+          { "type": "recoil", "amp": 0.3, "dir": [-1, 0] }
+        ]
+      },
+      {
+        "part": "ogre/pupils", "parent": 1, "pos": [-0.124, -0.72], "pivot": [0.5, 0.5], "pen": "pencil",
+        "mods": [
+          { "type": "blink", "every": 4, "hold": 0.12 }
+        ]
+      },
+      { "part": "ogre/horns", "parent": 1, "pos": [0, -1.12], "pivot": [0.5, 1.0], "pen": "red" },
+      { "part": "ogre/helmet", "parent": 1, "pos": [0, -0.86], "pivot": [0.5, 0.95], "pen": "pencil" },
+      {
+        "part": "ogre/club", "parent": 1, "pos": [-0.55, -0.6], "pivot": [0.95, 0.55], "rot": -30, "pen": "red",
         "mods": [
           { "type": "sway", "amp": 4, "freq": 0.5 },
           { "type": "swing", "amp": -70 }
         ]
       },
       {
-        "part": "bathking/foot", "pos": [-0.34, 0.595], "pivot": [0.5, 0.5], "pen": "red",
+        "part": "ogre/foot", "pos": [-0.25, 0.36], "pivot": [0.5, 0.5], "pen": "red",
         "mods": [
-          { "type": "bob", "amp": -0.102, "freq": 1.6, "on": "walk", "phase": 0 }
+          { "type": "bob", "amp": -0.06, "freq": 1.6, "on": "walk", "phase": 0 }
         ]
       }
     ]
