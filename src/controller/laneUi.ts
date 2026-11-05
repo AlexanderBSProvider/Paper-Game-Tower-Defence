@@ -51,11 +51,6 @@ export interface LaneUi {
   setMenu(visible: boolean): void;
   /** Помітка в куті (дев-режим), щоб не забути, що він увімкнений. */
   setBadge(text: string | null): void;
-  /**
-   * Підказка-стрілка навчання: бульбашка біля точки екрана. Дотиків не
-   * забирає — під нею треба тапати. null — сховати.
-   */
-  coach(c: { text: string; x: number; y: number; place: 'right' | 'above' | 'below'; maxW?: number } | null): void;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
@@ -82,15 +77,12 @@ export function createLaneUi(onMenu: () => void): LaneUi {
   const banner = el('div', 'banner');
   const veil = el('div', 'veil');
   veil.hidden = true;
-  const coachEl = el('div', 'coach');
-  coachEl.hidden = true;
-  let coachText = '';
   const badge = el('div', 'dev-badge');
   badge.hidden = true;
   const menu = el('button', 'menu-btn', '☰');
   menu.setAttribute('aria-label', 'Меню');
   menu.hidden = true;
-  root.append(banner, coachEl, veil, menu, badge);
+  root.append(banner, veil, menu, badge);
   document.body.append(root);
 
   // Дотик по записці не має долітати до канваса під нею.
@@ -185,16 +177,6 @@ export function createLaneUi(onMenu: () => void): LaneUi {
     setBadge(text) {
       badge.hidden = !text;
       badge.textContent = text ?? '';
-    },
-
-    coach(c) {
-      if (!c) { coachEl.hidden = true; coachText = ''; return; }
-      if (c.text !== coachText) { coachEl.textContent = c.text; coachText = c.text; }
-      coachEl.className = `coach ${c.place}`;
-      coachEl.style.maxWidth = c.maxW ? `${Math.round(c.maxW)}px` : '';
-      coachEl.style.left = `${Math.round(c.x)}px`;
-      coachEl.style.top = `${Math.round(c.y)}px`;
-      coachEl.hidden = false;
     },
   };
 }

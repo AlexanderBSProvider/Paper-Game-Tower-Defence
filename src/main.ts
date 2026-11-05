@@ -89,8 +89,9 @@ const world = inkContainer([boil.filter]); // чорнило, одиниця = �
 const hud = inkContainer();                // нотатки на полях, екранні пікселі
 const padSheet = new Container();           // підкладка рамки: звичайний бленд
 const pad = inkContainer();                 // чорнило рамки обведення
+const coachLayer = inkContainer();          // навчання: рука й піктограми, над рамкою
 
-app.stage.addChild(paper.base, world, paper.overlay, hud, padSheet, pad, boil.sprite);
+app.stage.addChild(paper.base, world, paper.overlay, hud, padSheet, pad, coachLayer, boil.sprite);
 
 const textures = bakeParts(app.renderer, parts, look);
 const partTex = bakeCatalogue(app.renderer, towerParts.parts, look);
@@ -131,7 +132,7 @@ if (lane) {
   const campaign = createCampaign({
     app, world, hud, look, balance, rigDefs, parts, textures, layout,
     base: laneLevel!, weapons: laneWeapons!, buildings: laneBuildings!, enemyDefs: laneEnemies!,
-    campaign: laneCampaign!, tracePad, shelf, sdk,
+    campaign: laneCampaign!, tracePad, shelf, sdk, coachLayer,
     pause(on) { pauseBy.menu = on; syncPause(); },
   });
   systems.push((dt) => campaign.update(dt));

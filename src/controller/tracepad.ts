@@ -57,6 +57,8 @@ export interface TracePadOpts {
 
 export interface TracePad {
   readonly open: boolean;
+  /** Гравець уже веде лінію в рамці: показ «як обводити» можна прибрати. */
+  readonly drawn: boolean;
   readonly box: Box;
   resize(layout: Layout): void;
   /** @param outline штрихи деталі в 0..1. null у відповіді — передумав. */
@@ -288,6 +290,7 @@ export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }: Tr
 
   return {
     get open() { return view.visible; },
+    get drawn() { return view.visible && strokes.length > 0; },
 
     /** Де стояла рамка. Потрібно панелям: обведене летить звідси на поле,
      *  тому після закриття координати мають лишитись. */

@@ -15,6 +15,7 @@ import type { LaneHud } from './controller/laneHud.js';
 import { createSquadPanel } from './controller/squadPanel.js';
 import type { SquadPanel } from './controller/squadPanel.js';
 import { createLaneUi } from './controller/laneUi.js';
+import { createCoachArt } from './view/coachArt.js';
 import type { Btn } from './controller/laneUi.js';
 import type { Shelf } from './controller/shelfDom.js';
 import type { TracePad } from './controller/tracepad.js';
@@ -50,6 +51,8 @@ export interface CampaignDeps {
   tracePad: TracePad;
   shelf: Shelf;
   sdk: { commercialBreak(): Promise<unknown> | void };
+  /** шар навчання над рамкою обведення (екранні px) */
+  coachLayer: Container;
   /** поставити або зняти паузу меню (вкладку стереже main) */
   pause(on: boolean): void;
 }
@@ -88,6 +91,9 @@ export function createCampaign(d: CampaignDeps): Campaign {
   const slow = d.base.slowWhileDrawing ?? 0.1;
 
   const ui = createLaneUi(() => openMenu());
+  /** Навчання малюнками: рука й піктограми замість тексту. */
+  const art = createCoachArt(d.coachLayer, d.look, B.buildings.well?.outline ?? []);
+  const artUnit = () => Math.max(40, Math.min(110, d.layout.cell * 1.25));
   /** Дев-режим: усе відкрите (dev.ts). Прогрес однаково записується. */
   const dev = devMode();
   if (dev) ui.setBadge('DEV · усе відкрито · ?dev=0 — вимкнути');
@@ -134,7 +140,7 @@ export function createCampaign(d: CampaignDeps): Campaign {
     coach = next.kind === 'page' && next.i === 0 && !(progress.stars[C.pages[0].id] > 0) ? 'slot' : 'done';
     coachT = 0;
     sawDrop = false;
-    ui.coach(null);
+    art.hide();
     pending = [];
     announceAt = 0;
     ended = false;
@@ -209,12 +215,15 @@ export function createCampaign(d: CampaignDeps): Campaign {
   });
 
   /**
-   * Навчання показом, а не стіною тексту: стрілка біля того, куди тапати, і
-   * одне речення. Кроки йдуть за тим, що гравець справді зробив: намалював
-   * бійця → колодязь → забрав краплю → підказка про лазер.
+   * Навчання показом: рука тапає туди, куди треба, обводить трафарет сама,
+   * піктограми пояснюють колодязь і лазер. Жодного слова — малюнок однаковий
+   * для всіх мов. Кроки йдуть за тим, що гравець справді зробив: намалював
+   * бійця → колодязь → забрав краплю → комікс про лазер.
    */
   function stepCoach(dt: number) {
-    if (!s || coach === 'done' || ended || menuOpen) { ui.coach(null); return; }
+    art.resize(artUnit());
+    art.tick(dt);
+    if (!s || coach === 'done' || ended || menuOpen) { art.hide(); return; }
     const g = s.game, L = d.layout, pad = d.tracePad;
     const sx = (cx: number) => L.ox + cx * L.cell, sy = (cy: number) => L.oy + cy * L.cell;
     const mid = Math.floor(g.band.rows / 2);
@@ -227,7 +236,7 @@ export function createCampaign(d: CampaignDeps): Campaign {
         // Рамка закрилась: або обведене летить на місце (юніт за мить), або передумав.
         coachT += dt;
         if (coachT > 0.8) { coach = 'slot'; coachT = 0; }
-        ui.coach(null);
+        art.hide();
         return;
       }
     }
@@ -235,41 +244,52 @@ export function createCampaign(d: CampaignDeps): Campaign {
 
     switch (coach) {
       case 'slot':
-        ui.coach({ text: uk.coachSlot, x: sx(g.slotX + 0.55), y: sy(rowY(g.band, mid)), place: 'right' });
+        art.picto(null);
+        art.tap(sx(g.slotX), sy(rowY(g.band, mid)));
         return;
       case 'trace': {
         coachT = 0;
+        art.picto(null);
+        // Почав вести сам — показ більше не заважає.
+        if (pad.drawn) { art.hideHand(); return; }
         const b = pad.box;
-        // Праворуч від рамки, якщо там є хоч трохи місця (на телефоні вузько,
-        // тоді бульбашка вужча й вища); інакше над рамкою.
-        const room = L.w - (b.x + b.side) - 34;
-        ui.coach(room > 120 || b.y < 100
-          ? { text: uk.coachTrace, x: b.x + b.side, y: b.y + b.side * 0.4, place: 'right', maxW: Math.max(110, Math.min(260, room)) }
-          : { text: uk.coachTrace, x: b.x + b.side / 2, y: b.y, place: 'above' });
+        const outline = W.weapons[s.panel.tool]?.outline ?? [];
+        art.trace(outline.map((st) => st.map(([x, y]): [number, number] => [b.x + x * b.side, b.y + y * b.side])));
         return;
       }
       case 'well': {
-        if (pad.open) { ui.coach(null); return; }
+        if (pad.open) {
+          // Обводить колодязь — показуємо, як, поки не почав сам.
+          art.picto(null);
+          if (pad.drawn) { art.hideHand(); return; }
+          const b = pad.box;
+          art.trace((B.buildings.well?.outline ?? []).map((st) => st.map(([x, y]): [number, number] => [b.x + x * b.side, b.y + y * b.side])));
+          return;
+        }
         const col = [0, 1, 2].find((c) => !g.town.at(mid, c)) ?? 0;
         const [cx, cy] = g.plotCenter(mid, col);
-        ui.coach({ text: uk.coachWell, x: sx(cx + 0.7), y: sy(cy), place: 'right' });
+        art.tap(sx(cx), sy(cy));
+        // Праворуч на межі рядів: там, де щойно намальований боєць уже пройшов.
+        art.picto('well', sx(cx + 2.6), sy(cy - (g.band.y1 - g.band.y0) / g.band.rows * 0.5));
         return;
       }
       case 'drop': {
+        art.picto(null);
         const p = g.dropAt();
         if (!p) {
-          ui.coach(null);
+          art.hideHand();
           if (sawDrop) { coach = 'laser'; coachT = 6; }
           return;
         }
         sawDrop = true;
-        ui.coach({ text: uk.coachDrop, x: sx(p[0]), y: sy(p[1] - 0.45), place: 'above' });
+        art.tap(sx(p[0]), sy(p[1]));
         return;
       }
       case 'laser':
         coachT -= dt;
-        if (coachT <= 0) { coach = 'done'; ui.coach(null); return; }
-        ui.coach({ text: uk.coachLaser, x: sx(g.level.homeX + 0.6), y: sy(g.band.y0 + 0.6), place: 'right' });
+        art.hideHand();
+        if (coachT <= 0) { coach = 'done'; art.hide(); return; }
+        art.picto('laser', sx(g.level.homeX + 1.1), sy(g.band.y0 + 0.75));
         return;
     }
   }
