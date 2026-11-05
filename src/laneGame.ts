@@ -768,20 +768,7 @@ export function createLaneGame({
   /** Зріст ворога на екрані: хітбокс з даних × масштаб малюнка. */
   const tall = (e: LaneEnemy) => e.def.size * artK * (e.def.scale ?? 1);
 
-  /** Корона боса: три зубці маркером над головою, щоб його впізнавали здалеку. */
-  function crown(def: LaneEnemyDef): Graphics {
-    const g = new Graphics();
-    const top = headTop(def);
-    const w = 0.42, hh = 0.28;
-    const pts: Vec2[] = [[-w, top], [-w, top - hh], [-w / 2, top - hh * 0.45], [0, top - hh * 1.15], [w / 2, top - hh * 0.45], [w, top - hh], [w, top], [-w, top]];
-    g.poly(pts.flat()).fill({ color: look.pens.marker, alpha: 0.85 });
-    penStroke(g, pts, { color: look.pens.orange ?? look.pens.red, width: 0.05, alpha: 0.95, jitter: 0.01, step: 0.15, overshoot: 0.02, halo: 0.15 });
-    return g;
-  }
 
-  /** Маківка рига в його власних одиницях: від якоря удару трохи вгору.
-   *  Хітбокс для цього не годиться — малюнок здорованя нижчий за коробку. */
-  const headTop = (def: LaneEnemyDef) => (rigDefs[def.rig]?.anchors?.hit?.[1] ?? -def.size / 2) * 0.75 - 0.05;
 
   /** Смуга hp над босом: штрихування, що коротшає. */
   function drawBar(e: LaneEnemy) {
@@ -789,7 +776,9 @@ export function createLaneGame({
     if (!g || e.barHp === e.hp) return;
     e.barHp = e.hp;
     g.clear();
-    const w = 1.1, y = headTop(e.def) - 0.62;
+    // Над рогами: верх коробки рига, а не якір удару — роги вищі за голову.
+    const box = rigDefs[e.def.rig]?.hitbox ?? [1.9, e.def.size];
+    const w = 1.1 * box[0] / 1.9, y = -box[1] * 0.86;
     const p = Math.max(0, e.hp / e.maxHp);
     penRectLite(g, -w / 2, y, w, 0.2, look.pens.pencil);
     if (p > 0) {
@@ -814,7 +803,7 @@ export function createLaneGame({
       cd: 0, moving: true, vs: def.vs,
     };
     if (def.boss) {
-      rig.view.addChild(crown(def));
+      // Корона намальована в самому ригу боса (bathking); тут лише смуга hp.
       e.bar = new Graphics();
       rig.view.addChild(e.bar);
       drawBar(e);

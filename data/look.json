@@ -4,7 +4,7 @@
   "sprite": {
     "refCell": 25,
     "maxScale": 1.8,
-    "supersample": 2
+    "supersample": 4
   },
 
   "paper": {

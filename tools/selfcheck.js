@@ -1354,7 +1354,7 @@ const enemyIds = Object.keys(EN).filter((k) => !k.startsWith('_'));
   // ponytail: мапу DOODLES читаємо реґекспом, а не імпортом — procart.ts тягне
   // Pixi, а Pixi в node не живе. Перестане ловити, якщо мапу перепишуть інакше:
   // тоді assert нижче про розмір сам про це і скаже.
-  const src = readFileSync(root + 'src/view/procart.ts', 'utf8');
+  const src = readFileSync(root + 'src/view/procart.ts', 'utf8') + readFileSync(root + 'src/view/monsters.ts', 'utf8');
   const doodles = new Set([...src.matchAll(/^ {2}(\w+): \w+,\r?$/gm)].map((m) => m[1]));
   assert.ok(doodles.size > 5, 'мапу DOODLES не вичитали — перевірка нижче нічого не варта');
 
@@ -1364,7 +1364,7 @@ const enemyIds = Object.keys(EN).filter((k) => !k.startsWith('_'));
   }
   for (const [id, def] of Object.entries(PT)) {
     if (id.startsWith('_') || !def.file.startsWith('proc:')) continue;
-    assert.ok(doodles.has(def.file.slice(5)), `частина ${id}: генератора ${def.file} немає в procart.ts`);
+    assert.ok(doodles.has(def.file.slice(5)), `частина ${id}: генератора ${def.file} немає в procart.ts чи monsters.ts`);
   }
 }
 
