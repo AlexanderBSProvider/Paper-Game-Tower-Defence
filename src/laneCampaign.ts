@@ -28,6 +28,7 @@ import type { LaneEnemies, LaneLevel } from './model/lane.js';
 import type { WeaponsData } from './model/weapons.js';
 import type { BuildingsData } from './model/buildings.js';
 import { loadRaw, saveRaw } from './storage.js';
+import { devMode } from './dev.js';
 import { uk } from './strings.js';
 import type { Balance, Layout, Look, Parts, RigDefs } from './types.js';
 
@@ -87,6 +88,11 @@ export function createCampaign(d: CampaignDeps): Campaign {
   const slow = d.base.slowWhileDrawing ?? 0.1;
 
   const ui = createLaneUi(() => openMenu());
+  /** Дев-режим: усе відкрите (dev.ts). Прогрес однаково записується. */
+  const dev = devMode();
+  if (dev) ui.setBadge('DEV · усе відкрито · ?dev=0 — вимкнути');
+  const isOpen = (i: number) => dev || pageOpen(C, progress, i);
+  const endlessIsOpen = () => dev || endlessOpen(C, progress);
 
   function makeSession(level: LaneLevel, title: string): Session {
     const game = createLaneGame({
@@ -167,10 +173,11 @@ export function createCampaign(d: CampaignDeps): Campaign {
 
   function showPages(resume?: () => void) {
     ui.showPages({
-      pages: C.pages.map((p, i) => ({ n: i + 1, title: p.title, stars: progress.stars[p.id] ?? 0, open: pageOpen(C, progress, i) })),
+      title: dev ? 'Зошит · DEV' : undefined,
+      pages: C.pages.map((p, i) => ({ n: i + 1, title: p.title, stars: progress.stars[p.id] ?? 0, open: isOpen(i) })),
       endless: {
-        open: endlessOpen(C, progress),
-        label: endlessOpen(C, progress)
+        open: endlessIsOpen(),
+        label: endlessIsOpen()
           ? (progress.endlessBest ? uk.record(progress.endlessBest) : uk.endless)
           : uk.endlessLocked(C.pages.findIndex((p) => p.id === C.endless.after) + 1),
       },

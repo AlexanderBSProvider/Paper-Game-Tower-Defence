@@ -28,6 +28,8 @@ export interface PageCard {
 }
 
 export interface PagesView {
+  /** заголовок замість «Зошит» (дев-режим підписується) */
+  title?: string;
   pages: PageCard[];
   endless: { open: boolean; label: string };
   onPick(i: number): void;
@@ -47,6 +49,8 @@ export interface LaneUi {
   readonly open: boolean;
   /** Кнопка меню в куті: видно лише в бою. */
   setMenu(visible: boolean): void;
+  /** Помітка в куті (дев-режим), щоб не забути, що він увімкнений. */
+  setBadge(text: string | null): void;
   /**
    * Підказка-стрілка навчання: бульбашка біля точки екрана. Дотиків не
    * забирає — під нею треба тапати. null — сховати.
@@ -81,10 +85,12 @@ export function createLaneUi(onMenu: () => void): LaneUi {
   const coachEl = el('div', 'coach');
   coachEl.hidden = true;
   let coachText = '';
+  const badge = el('div', 'dev-badge');
+  badge.hidden = true;
   const menu = el('button', 'menu-btn', '☰');
   menu.setAttribute('aria-label', 'Меню');
   menu.hidden = true;
-  root.append(banner, coachEl, veil, menu);
+  root.append(banner, coachEl, veil, menu, badge);
   document.body.append(root);
 
   // Дотик по записці не має долітати до канваса під нею.
@@ -144,7 +150,7 @@ export function createLaneUi(onMenu: () => void): LaneUi {
     showPages(v) {
       const note = el('div', 'note pages');
       const head = el('div', 'pages-head');
-      head.append(el('h1', '', 'Зошит'));
+      head.append(el('h1', '', v.title ?? 'Зошит'));
       note.append(head);
       const grid = el('div', 'grid');
       v.pages.forEach((p, i) => {
@@ -175,6 +181,11 @@ export function createLaneUi(onMenu: () => void): LaneUi {
     get open() { return !veil.hidden; },
 
     setMenu(visible) { menu.hidden = !visible; },
+
+    setBadge(text) {
+      badge.hidden = !text;
+      badge.textContent = text ?? '';
+    },
 
     coach(c) {
       if (!c) { coachEl.hidden = true; coachText = ''; return; }
