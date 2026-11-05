@@ -9,27 +9,6 @@
   body { touch-action:none; -webkit-tap-highlight-color:transparent; }
   #app canvas { display:block; }
 
-  /* Інструкція режиму lane: записка поверх канваса. Перо в грі літер не вміє,
-     тому текст — DOM. Показує main.ts лише з ?mode=lane. */
-  #howto {
-    position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
-    background:rgba(42,36,24,0.35); z-index:10; cursor:pointer; padding:16px; box-sizing:border-box;
-  }
-  #howto[hidden] { display:none; }
-  #howto .note {
-    max-width:460px; width:100%; background:#f6f2e7; color:#2b3a8f;
-    font:16px/1.45 "Segoe Print","Bradley Hand","Comic Sans MS",cursive;
-    padding:18px 22px; border:1.5px solid #5a5a5a; box-shadow:4px 5px 0 rgba(42,36,24,0.22);
-    background-image:linear-gradient(rgba(167,186,214,0.35) 1px, transparent 1px);
-    background-size:100% 23px;
-  }
-  #howto h1 { font-size:20px; margin:0 0 10px; color:#2b3a8f; }
-  #howto p { margin:0 0 8px; }
-  #howto b { color:#c0392b; font-weight:600; }
-  #howto .rps { color:#5a5a5a; }
-  #howto .star { letter-spacing:1px; }
-  #howto .s1 { color:#8a8a8a; } #howto .s2 { color:#2b3a8f; } #howto .s3 { color:#7b3fa0; } #howto .s4 { color:#e0761a; }
-  #howto .tap { margin-top:12px; color:#2e7d5b; font-size:14px; }
 
   /* Полиця трафаретів ліворуч від рамки обведення: DOM, бо перо літер не вміє. */
   #shelf {
@@ -65,6 +44,69 @@
     #shelf .card svg { width:28px; height:28px; }
     #shelf .card { padding:2px 5px; }
   }
+  /* Кампанія: банер, записка кінця сторінки, зошит, кнопка меню (laneUi.ts). */
+  #lane-ui { position:fixed; inset:0; pointer-events:none; z-index:12;
+    font-family:"Segoe Print","Bradley Hand","Comic Sans MS",cursive; color:#2b3a8f; }
+  #lane-ui .banner { position:absolute; left:50%; top:22%; transform:translate(-50%,-10px) rotate(-2deg);
+    text-align:center; opacity:0; transition:opacity .25s, transform .25s; white-space:nowrap; }
+  #lane-ui .banner.show { opacity:1; transform:translate(-50%,0) rotate(-2deg); }
+  #lane-ui .b-main { display:inline-block; font-size:clamp(26px,6vh,52px); font-weight:700; color:#2b3a8f;
+    padding:0 .35em; background:linear-gradient(transparent 55%, rgba(255,224,102,.85) 55%, rgba(255,224,102,.85) 90%, transparent 90%); }
+  #lane-ui .b-sub { font-size:clamp(13px,2.6vh,20px); color:#5a5a5a; margin-top:4px; }
+  #lane-ui .veil { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    background:rgba(42,36,24,.35); pointer-events:auto; padding:12px; box-sizing:border-box; }
+  #lane-ui .veil[hidden] { display:none; }
+  #lane-ui .note { background:#f6f2e7; border:1.5px solid #5a5a5a; box-shadow:4px 5px 0 rgba(42,36,24,.22);
+    padding:16px 22px 18px; max-width:min(560px,94vw); max-height:92vh; overflow:auto; box-sizing:border-box;
+    background-image:linear-gradient(rgba(167,186,214,.35) 1px, transparent 1px); background-size:100% 23px;
+    transform:rotate(-.6deg); animation:note-in .28s ease-out; }
+  @keyframes note-in { from { transform:translateY(18px) rotate(-.6deg); opacity:0; } }
+  #lane-ui h1 { font-size:clamp(20px,4.4vh,30px); margin:0 0 6px; text-align:center; }
+  #lane-ui .note.win h1 { color:#2e7d5b; }
+  #lane-ui .note.lose h1 { color:#c0392b; }
+  #lane-ui .note p { margin:4px 0; text-align:center; font-size:clamp(13px,2.5vh,17px); color:#2b3a8f; }
+  #lane-ui .stars { text-align:center; font-size:clamp(30px,7vh,52px); line-height:1; margin:2px 0 6px; letter-spacing:4px; }
+  #lane-ui .star { color:#b9b3a3; display:inline-block; }
+  #lane-ui .star.on { color:#e0761a; animation:star-pop .45s cubic-bezier(.2,1.6,.4,1) both; }
+  @keyframes star-pop { from { transform:scale(0) rotate(-40deg); opacity:0; } }
+  #lane-ui .btns { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:12px; }
+  #lane-ui .btn { font:inherit; font-size:clamp(14px,2.7vh,19px); color:#2b3a8f; background:#fffdf6;
+    border:1.5px solid #5a5a5a; border-radius:4px; padding:6px 16px; cursor:pointer; touch-action:manipulation;
+    box-shadow:2px 3px 0 rgba(42,36,24,.18); }
+  #lane-ui .btn.primary { border-color:#2b3a8f; background:#fff3b0; font-weight:700; }
+  #lane-ui .btn:active { transform:translateY(2px); box-shadow:none; }
+  #lane-ui .pages { width:min(560px,94vw); }
+  #lane-ui .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:8px; }
+  #lane-ui .page { font:inherit; color:#2b3a8f; background:#fffdf6; border:1.5px solid #8f8875; border-radius:3px;
+    padding:6px 4px 4px; cursor:pointer; touch-action:manipulation; display:flex; flex-direction:column; align-items:center; gap:2px; }
+  #lane-ui .page .num { font-size:22px; font-weight:700; line-height:1; }
+  #lane-ui .page .ttl { font-size:11px; color:#5a5a5a; min-height:2.4em; text-align:center; line-height:1.2; }
+  #lane-ui .page .stars { font-size:16px; margin:0; letter-spacing:1px; }
+  #lane-ui .page .star.on { animation:none; }
+  #lane-ui .page.locked { opacity:.45; cursor:default; }
+  #lane-ui .page.endless { background:#fff3b0; border-color:#2b3a8f; }
+  #lane-ui .page.endless.locked { background:#fffdf6; }
+  #lane-ui .menu-btn { position:absolute; top:8px; right:8px; pointer-events:auto; font:inherit; font-size:20px;
+    width:40px; height:40px; color:#2b3a8f; background:rgba(246,242,231,.9); border:1.5px solid #8f8875;
+    border-radius:4px; cursor:pointer; touch-action:manipulation; }
+  #lane-ui .menu-btn[hidden] { display:none; }
+  /* Навчання: бульбашка зі стрілкою біля того, куди тапати. Дотиків не забирає. */
+  #lane-ui .coach { position:absolute; max-width:min(260px,40vw); padding:7px 11px; font-size:clamp(13px,2.6vh,17px);
+    line-height:1.25; color:#2b3a8f; background:#fffdf6; border:2px solid #2b3a8f; border-radius:6px;
+    box-shadow:3px 4px 0 rgba(42,36,24,.2); pointer-events:none; animation:coach-bob 1.1s ease-in-out infinite; }
+  #lane-ui .coach[hidden] { display:none; }
+  #lane-ui .coach::after { content:''; position:absolute; width:0; height:0; border:9px solid transparent; }
+  #lane-ui .coach.right { transform:translate(22px,-50%); }
+  #lane-ui .coach.right::after { left:-20px; top:50%; margin-top:-9px; border-right-color:#2b3a8f; }
+  #lane-ui .coach.above { transform:translate(-50%, calc(-100% - 22px)); }
+  #lane-ui .coach.above::after { left:50%; bottom:-20px; margin-left:-9px; border-top-color:#2b3a8f; }
+  #lane-ui .coach.below { transform:translate(-50%, 22px); }
+  #lane-ui .coach.below::after { left:50%; top:-20px; margin-left:-9px; border-bottom-color:#2b3a8f; }
+  @keyframes coach-bob { 50% { margin-left:5px; } }
+  #lane-ui .coach.above, #lane-ui .coach.below { animation-name:coach-bob-v; }
+  @keyframes coach-bob-v { 50% { margin-top:-5px; } }
+  /* Платформи просять, щоб подвійний тап і довге натискання не виділяли гру. */
+  body { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
 </style>
 <!--
   Платформний SDK підключається одним тегом; src/sdk.js сам визначає, який завантажено.
@@ -75,29 +117,6 @@
 </head>
 <body>
 <div id="app"></div>
-<div id="howto" hidden>
-  <div class="note">
-    <h1>Обведи зброю — і в бій</h1>
-    <p><b>Тапни слот зліва</b> → обери зброю на полиці → обведи її. Юніт іде сам.
-      Поки малюєш, час майже стоїть.</p>
-    <p><b>Тапни квадрат за червоною лінією</b> → обери будівлю → обведи. Колодязь дає
-      краплю чорнила: <b>тапни краплю</b>, щоб забрати. Чорнило тільки з колодязів.
-      Вороги, що пройшли повз бійців, ламають будівлі.</p>
-    <p>Точніше обвів — рідкіша зброя:
-      <span class="star s1">★</span> звичайна ·
-      <span class="star s2">★★</span> рідкісна ·
-      <span class="star s3">★★★</span> міфічна ·
-      <span class="star s4">★★★★</span> легендарна.</p>
-    <p class="rps"><b>Камінь · ножиці · папір.</b>
-      Булава й арбалет ламають <b>броню здорованя</b> (×2), але ледь чіпають бігуна.
-      Спис і праща ріжуть <b>бігуна</b> (×2), але ламаються об броню.
-      Меч і лук — проти звичайних. Бігун добігає до стрільців, здоровань ламає бійців.
-      Священик лікує тих, хто поруч.</p>
-    <p>Ворог дійшов до <b>червоної лінії</b> — лазер ряду спалює всіх у ряду, але лише раз.
-      Далі кожен прорив — мінус життя. Нова зброя й будівлі відкриваються за хвилі.</p>
-    <p class="tap">тапни, щоб почати</p>
-  </div>
-</div>
 <script type="module" src="./dist/main.js"></script>
 </body>
 </html>

@@ -63,6 +63,8 @@ export interface LaneWave extends Wave {
   row?: number | null;
   /** ваги вибору ворога на кожен спавн; ключі з laneEnemies.json */
   mix: Record<string, number>;
+  /** бос хвилі (ключ з laneEnemies.json): виходить першим, решта — за ним */
+  boss?: string;
 }
 
 export interface LaneLevel {
@@ -95,6 +97,13 @@ export interface LaneLevel {
   buildingUnlocks: { wave: number; buildings: string[] }[];
   waveBreak?: number;
   waves: LaneWave[];
+  /** чорнило на старті; без нього — balance.economy.startInk */
+  startInk?: number;
+  /** хвилі без кінця: після списку laneGame бере endlessWave() */
+  endless?: boolean;
+  /** у скільки разів малюнок персонажів більший за хітбокс: геймплей у
+   *  клітинках не змінюється, змінюється лише те, наскільки їх видно */
+  artScale?: number;
 }
 
 // --- data/laneEnemies.json --------------------------------------------------
@@ -112,6 +121,10 @@ export interface LaneEnemyDef {
   reach: number;
   /** власний бонус проти роду союзника */
   vs?: Partial<Record<WeaponKind, number>>;
+  /** множник малюнка поверх artScale рівня: бос — той самий риг, але більший */
+  scale?: number;
+  /** бос: лазер його не спалює, а відкидає й ранить; над головою смуга hp */
+  boss?: boolean;
 }
 
 /** Службові `_*` відсіює код, як і в parts.json — у типі їх немає. */

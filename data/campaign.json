@@ -1,0 +1,112 @@
+{
+  "_": "Кампанія: сторінки зошита. Кожна — латка поверх laneLevel.json (ряди, життя, чорнило, хвилі); геометрія коридору спільна. unlock — що з'являється на цій сторінці й лишається відкритим далі: у рівні воно доступне з першої секунди. Порядок відкриттів стережеться селфчеком: контра до ворога відкрита не пізніше за самого ворога.",
+
+  "pages": [
+    {
+      "id": "p1", "title": "Перші каракулі", "rows": 3, "lives": 5, "startInk": 100,
+      "unlock": { "weapons": ["sword", "bow"], "buildings": ["well"] },
+      "waves": [
+        {"count": 4, "every": 4.5, "mix": {"earling": 1}},
+        {"count": 6, "every": 4.0, "mix": {"earling": 1}},
+        {"count": 8, "every": 3.4, "mix": {"earling": 1}, "hp": 1.1}
+      ]
+    },
+    {
+      "id": "p2", "title": "Хтось біжить", "rows": 3, "lives": 5, "startInk": 100,
+      "unlock": { "weapons": ["spear"], "buildings": ["barricade"] },
+      "waves": [
+        {"count": 5, "every": 4.0, "mix": {"earling": 1}},
+        {"count": 7, "every": 3.5, "mix": {"earling": 2, "runner": 1}},
+        {"count": 9, "every": 3.1, "mix": {"earling": 2, "runner": 2}},
+        {"count": 10, "every": 2.8, "mix": {"earling": 1, "runner": 2}, "hp": 1.1}
+      ]
+    },
+    {
+      "id": "p3", "title": "Четвертий ряд", "rows": 4, "lives": 5, "startInk": 110,
+      "unlock": { "weapons": ["sling"], "buildings": ["trap"] },
+      "waves": [
+        {"count": 6, "every": 3.6, "mix": {"earling": 2, "runner": 1}},
+        {"count": 8, "every": 3.2, "mix": {"earling": 2, "runner": 2}},
+        {"count": 10, "every": 2.9, "mix": {"earling": 2, "runner": 3}, "hp": 1.1},
+        {"count": 12, "every": 2.6, "mix": {"earling": 1, "runner": 3}, "hp": 1.2}
+      ]
+    },
+    {
+      "id": "p4", "title": "Броня", "rows": 4, "lives": 5, "startInk": 120,
+      "unlock": { "weapons": ["mace"], "buildings": ["banner_armor"] },
+      "waves": [
+        {"count": 6, "every": 3.4, "mix": {"earling": 2, "runner": 1}},
+        {"count": 7, "every": 3.2, "mix": {"earling": 2, "brute": 1}},
+        {"count": 9, "every": 2.9, "mix": {"earling": 2, "runner": 2, "brute": 1}, "hp": 1.1},
+        {"count": 11, "every": 2.7, "mix": {"earling": 1, "runner": 2, "brute": 2}, "hp": 1.2},
+        {"count": 12, "every": 2.5, "mix": {"earling": 1, "runner": 2, "brute": 2}, "hp": 1.3}
+      ]
+    },
+    {
+      "id": "p5", "title": "Рогатий бос", "rows": 4, "lives": 5, "startInk": 130,
+      "unlock": { "weapons": ["crossbow"], "buildings": ["forge"] },
+      "waves": [
+        {"count": 7, "every": 3.2, "mix": {"earling": 2, "runner": 1}},
+        {"count": 9, "every": 3.0, "mix": {"earling": 2, "runner": 2, "brute": 1}, "hp": 1.1},
+        {"count": 10, "every": 2.7, "mix": {"earling": 1, "runner": 2, "brute": 2}, "hp": 1.15},
+        {"count": 11, "every": 2.5, "mix": {"earling": 1, "runner": 2, "brute": 2}, "hp": 1.25},
+        {"count": 8, "every": 3.0, "mix": {"earling": 1, "runner": 1, "brute": 1}, "hp": 1.3, "boss": "boss"}
+      ]
+    },
+    {
+      "id": "p6", "title": "Польовий лікар", "rows": 4, "lives": 5, "startInk": 130,
+      "unlock": { "weapons": ["cross"], "buildings": ["chapel"] },
+      "waves": [
+        {"count": 8, "every": 3.0, "mix": {"earling": 2, "runner": 2}},
+        {"count": 10, "every": 2.8, "mix": {"earling": 1, "runner": 2, "brute": 1}, "hp": 1.2},
+        {"count": 11, "every": 2.6, "mix": {"earling": 1, "runner": 2, "brute": 2}, "hp": 1.3},
+        {"count": 13, "every": 2.4, "mix": {"earling": 1, "runner": 3, "brute": 2}, "hp": 1.35},
+        {"count": 13, "every": 2.2, "mix": {"earling": 1, "runner": 3, "brute": 3}, "hp": 1.45}
+      ]
+    },
+    {
+      "id": "p7", "title": "П'ять рядів", "rows": 5, "lives": 6, "startInk": 140,
+      "unlock": { "buildings": ["banner_swift", "banner_plain"] },
+      "waves": [
+        {"count": 9, "every": 2.9, "mix": {"earling": 2, "runner": 2}},
+        {"count": 11, "every": 2.7, "mix": {"earling": 2, "runner": 2, "brute": 1}, "hp": 1.2},
+        {"count": 13, "every": 2.5, "mix": {"earling": 1, "runner": 3, "brute": 2}, "hp": 1.35},
+        {"count": 14, "every": 2.3, "mix": {"earling": 1, "runner": 3, "brute": 3}, "hp": 1.5},
+        {"count": 16, "every": 2.1, "mix": {"earling": 1, "runner": 3, "brute": 3}, "hp": 1.6}
+      ]
+    },
+    {
+      "id": "p8", "title": "Зграя", "rows": 5, "lives": 6, "startInk": 140,
+      "waves": [
+        {"count": 10, "every": 2.4, "mix": {"runner": 3, "earling": 1}},
+        {"count": 14, "every": 2.0, "mix": {"runner": 4, "earling": 1}, "hp": 1.2},
+        {"count": 16, "every": 1.8, "mix": {"runner": 4, "brute": 1}, "hp": 1.35},
+        {"count": 18, "every": 1.7, "mix": {"runner": 5, "brute": 1}, "hp": 1.5},
+        {"count": 20, "every": 1.6, "mix": {"runner": 5, "brute": 2}, "hp": 1.6}
+      ]
+    },
+    {
+      "id": "p9", "title": "Залізний марш", "rows": 5, "lives": 6, "startInk": 170,
+      "waves": [
+        {"count": 7, "every": 3.2, "mix": {"brute": 2, "earling": 2}},
+        {"count": 9, "every": 3.0, "mix": {"brute": 2, "runner": 1, "earling": 1}, "hp": 1.15},
+        {"count": 10, "every": 2.8, "mix": {"brute": 2, "runner": 1}, "hp": 1.3},
+        {"count": 11, "every": 2.7, "mix": {"brute": 3, "runner": 2}, "hp": 1.4},
+        {"count": 13, "every": 2.5, "mix": {"brute": 3, "runner": 2, "earling": 1}, "hp": 1.5}
+      ]
+    },
+    {
+      "id": "p10", "title": "Остання сторінка", "rows": 5, "lives": 6, "startInk": 160,
+      "waves": [
+        {"count": 10, "every": 2.6, "mix": {"earling": 2, "runner": 2, "brute": 1}, "hp": 1.2},
+        {"count": 12, "every": 2.4, "mix": {"earling": 1, "runner": 2, "brute": 2}, "hp": 1.35},
+        {"count": 6, "every": 3.0, "mix": {"runner": 1, "brute": 1}, "hp": 1.4, "boss": "boss"},
+        {"count": 15, "every": 2.2, "mix": {"earling": 1, "runner": 3, "brute": 3}, "hp": 1.6},
+        {"count": 10, "every": 2.6, "mix": {"runner": 2, "brute": 2}, "hp": 1.7, "boss": "boss"}
+      ]
+    }
+  ],
+
+  "_endless": "Нескінченний режим: усе відкрите, хвилі генерує endlessWave() у model/campaign.ts, кожна п'ята з босом. Рахунок — найдальша хвиля.",
+  "endless": {"after": "p5", "rows": 5, "lives": 6, "startInk": 150}
+}

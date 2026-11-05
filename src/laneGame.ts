@@ -26,6 +26,7 @@ import { rowY, rowHeight, rowOf, pickWeighted } from './model/lane.js';
 import { createArmy } from './model/units.js';
 import { createTown } from './model/buildings.js';
 import { unlockedAt } from './model/weapons.js';
+import { waveOf } from './model/campaign.js';
 import type { Band, LaneEnemies, LaneEnemyDef, LaneLevel } from './model/lane.js';
 import type { Ally, Army, Foe } from './model/units.js';
 import type { Building, BuildingsData, Town } from './model/buildings.js';
@@ -39,7 +40,17 @@ export interface LaneEnemy extends Foe {
   def: LaneEnemyDef;
   rig: Rig;
   y: number;
+  maxHp: number;
+  /** смуга hp над босом; у звичайних ворогів немає */
+  bar?: Graphics;
+  barHp?: number;
 }
+
+/** Що сталося в рівні й варто показати поверх поля: банери, спалах життя. */
+export type LaneEvent =
+  | { type: 'wave'; n: number; last: boolean }
+  | { type: 'boss' }
+  | { type: 'life'; lives: number };
 
 export type Phase = 'break' | 'wave' | 'won' | 'lost';
 
@@ -47,6 +58,7 @@ export interface LaneState {
   lives: number;
   maxLives: number;
   wave: number;
+  /** скільки хвиль у рівні; 0 — нескінченний режим */
   waves: number;
   phase: Phase;
   breakLeft: number;
@@ -108,6 +120,8 @@ export interface LaneGame {
   plotCenter(row: number, col: number): Vec2;
   /** Тап по краплі над колодязем: забрати. @returns чи була крапля під пальцем */
   collectAt(cx: number, cy: number): boolean;
+  /** Де висить перша крапля, що чекає тапу (клітинки світу), або null. */
+  dropAt(): Vec2 | null;
   /** Підсвітити слоти маркером: є що намалювати, є куди тапати. */
   setSlotsActive(on: boolean): void;
   /** Те саме для фундаментів. */
@@ -121,9 +135,13 @@ export interface LaneGame {
   /** Куди летять краплі чорнила — центр колби в ЕКРАННИХ px; ставить HUD. */
   setGauge(at: () => Vec2): void;
   readonly lasers: readonly number[];
+  /** Події від останнього виклику: банери хвиль, бос, втрачене життя. */
+  takeEvents(): LaneEvent[];
   update(dtMs: number): void;
   rescale(s: number): void;
   resize(): void;
+  /** Прибрати все своє зі світу: рестарт рівня без перезавантаження сторінки. */
+  destroy(): void;
 }
 
 /** Снаряд ренжового: летить по ряду вправо, поки не дожене ціль. */
@@ -156,32 +174,107 @@ export function createLaneGame({
   const plotX = (col: number) => plots.x0 + plots.step * col;
 
   const wallet = createWallet({
-    start: balance.economy.startInk,
+    start: level.startInk ?? balance.economy.startInk,
     costs: balance.build,
     refund: balance.economy.refund,
   });
 
+  /** Малюнок персонажів більший за хітбокс: бій той самий, видно краще.
+   *  У тісних рядах (5 на сторінці) збільшення менше, інакше сусіди
+   *  налазять один на одного. */
+  const artK = (level.artScale ?? 1) * Math.min(1, rowHeight(band) / 2.2);
+
   const laneG = new Graphics();   // розмітка: ряди, дім, фронт, слоти, фундаменти
-  const glowG = new Graphics();   // маркерна підсвітка слотів, фундаментів, ряду
+  const glowG = new Graphics();   // смуга ряду, для якого зараз малюють
+  const pulseG = new Graphics();  // маркерні кола «тапни тут» — пульсують
+  const decals = new Container(); // клякси на місці загиблих: поле пам'ятає бій
   const laserG = new Graphics();  // випромінювачі лазера на лінії дому
   const units = new Container();  // усі, хто стоїть на землі: сортуються за y
   const shotLayer = new Container();
-  world.addChild(laneG, glowG, laserG, units, shotLayer);
+  world.addChild(laneG, decals, glowG, pulseG, laserG, units, shotLayer);
 
   const fx = createLaneFx(shotLayer, look);
   const rigs: Rig[] = [];
 
-  function mount(rig: Rig, x: number, y: number) {
+  /**
+   * Візуальний стан рига поверх моделі: відкидання від удару й «стусан»
+   * масштабом. Модель про це не знає — позиція в бою та сама, просто малюнок
+   * на мить зсувається й роздувається, і удар відчувається.
+   */
+  interface Vis { extra: number; kb: number; punch: number; }
+  const vis = new Map<Rig, Vis>();
+
+  function mount(rig: Rig, x: number, y: number, extra = 1) {
     rig.view.position.set(x, y);
-    rig.setScale(layout.spriteScale);
+    rig.setScale(layout.spriteScale * artK * extra);
     units.addChild(rig.view);
     rigs.push(rig);
+    vis.set(rig, { extra, kb: 0, punch: 0 });
     return rig;
   }
 
   function unplace(rig: Rig) {
     rig.view.destroy({ children: true });
     rigs.splice(rigs.indexOf(rig), 1);
+    vis.delete(rig);
+  }
+
+  /** Удар по ригу: dx — відкидання в клітинках (знак — куди), p — сила стусана. */
+  function jolt(rig: Rig | undefined, dx: number, p = 1) {
+    const v = rig && vis.get(rig);
+    if (!v) return;
+    v.kb = Math.max(-0.5, Math.min(0.5, v.kb + dx));
+    v.punch = Math.min(1, v.punch + p);
+  }
+
+  // --- тряска й хітстоп ---------------------------------------------------------
+  let shakeT = 0, shakeDur = 0, shakeAmp = 0, freeze = 0;
+  /** Аркуш смикається: сила в клітинках, тривалість у секундах. */
+  function shake(amp: number, dur = 0.25) {
+    if (amp < shakeAmp * (shakeT / Math.max(shakeDur, 1e-6))) return; // слабша не перебиває сильнішу
+    shakeAmp = amp; shakeDur = dur; shakeT = dur;
+  }
+  /** Мить, коли все завмирає: удар відчувається вагою. */
+  const hitstop = (s: number) => { freeze = Math.max(freeze, s); };
+
+  function stepShake(dt: number) {
+    if (shakeT <= 0) return;
+    shakeT = Math.max(0, shakeT - dt);
+    const k = shakeT / shakeDur;
+    const a = shakeAmp * k * layout.cell;
+    world.position.set(layout.ox + (Math.random() - 0.5) * 2 * a, layout.oy + (Math.random() - 0.5) * 2 * a);
+    if (shakeT === 0) world.position.set(layout.ox, layout.oy);
+  }
+
+  // --- клякси -------------------------------------------------------------------
+  /** Клякса чорнила там, де хтось упав: лишається на аркуші й повільно тане. */
+  function splat(x: number, y: number, r: number, color: string | number) {
+    const g = new Graphics();
+    const n = 9, pts: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2, rr = r * (0.7 + Math.random() * 0.45);
+      pts.push(x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.55);
+    }
+    g.poly(pts).fill({ color, alpha: 0.16 });
+    for (let i = 0; i < 5; i++) {
+      const a = Math.random() * Math.PI * 2, d = r * (1.1 + Math.random() * 0.7);
+      g.circle(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.55, r * (0.06 + Math.random() * 0.08))
+        .fill({ color, alpha: 0.3 });
+    }
+    decals.addChild(g);
+    while (decals.children.length > 40) decals.children[0].destroy();
+    splats.push({ g, t: 0 });
+  }
+  const splats: { g: Graphics; t: number }[] = [];
+  function stepSplats(dt: number) {
+    for (let i = splats.length - 1; i >= 0; i--) {
+      const s = splats[i];
+      if (s.g.destroyed) { splats.splice(i, 1); continue; }
+      s.t += dt;
+      // Тримається 10 с, тане ще 6: поле довго пам'ятає, де був бій.
+      s.g.alpha = s.t < 10 ? 1 : Math.max(0, 1 - (s.t - 10) / 6);
+      if (s.t >= 16) { s.g.destroy(); splats.splice(i, 1); }
+    }
   }
 
   // --- розмітка ---------------------------------------------------------------
@@ -209,10 +302,43 @@ export function createLaneGame({
     side([x0, y1], [x0, y0]);
   }
 
+  /** Чотири куточки олівцем замість суцільної рамки: «тут місце», а не коробка. */
+  function corners(g: Graphics, x0: number, y0: number, x1: number, y1: number, color: string | number, alpha: number) {
+    const k = Math.min(x1 - x0, y1 - y0) * 0.22;
+    const o = { ...pencil, color, width: 0.04, alpha, step: 0.3 };
+    penStroke(g, [[x0, y0 + k], [x0, y0], [x0 + k, y0]], o);
+    penStroke(g, [[x1 - k, y0], [x1, y0], [x1, y0 + k]], o);
+    penStroke(g, [[x1, y1 - k], [x1, y1], [x1 - k, y1]], o);
+    penStroke(g, [[x0 + k, y1], [x0, y1], [x0, y1 - k]], o);
+  }
+
+  /**
+   * Клякса-нора на правому краю ряду: звідси лізуть вороги. Без неї вони
+   * з'являлися нізвідки, і поле не мало «звідки» й «куди».
+   */
+  function burrow(g: Graphics, x: number, cy: number, h: number) {
+    const r = Math.min(0.9, h * 0.38);
+    const pts: number[] = [];
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2;
+      const rr = r * (0.82 + 0.18 * Math.sin(i * 2.7 + cy));
+      pts.push(x + Math.cos(a) * rr * 0.7, cy + 0.15 + Math.sin(a) * rr * 0.55);
+    }
+    g.poly(pts).fill({ color: look.pens.red, alpha: 0.2 });
+    hatch(g, x - r * 0.6, cy - r * 0.35, r * 1.2, r * 0.95, {
+      color: look.pens.red, gap: 0.12, jitterGap: 0.25, width: 0.03, alpha: 0.35, angle: -0.6,
+    });
+    penCircle(g, x, cy + 0.15, r * 0.62, { color: look.pens.red, width: 0.045, alpha: 0.55, jitter: 0.03, step: 0.25, halo: 0.1 });
+    for (const [dx, dy, rr] of [[-0.9, -0.3, 0.07], [-0.75, 0.5, 0.05], [0.2, -0.65, 0.06]] as [number, number, number][]) {
+      g.circle(x + dx * r, cy + dy * r, rr).fill({ color: look.pens.red, alpha: 0.35 });
+    }
+  }
+
   /**
    * Поле має читатись без слів: зліва слоти з плюсиком, лінія дому кольором
-   * поля зошита, за нею три фундаменти з молоточком у кожному ряду,
-   * посередині бліді рисочки фронту, ряди олівцем.
+   * поля зошита, за нею фундаменти з молоточком, посередині бліді рисочки
+   * фронту, праворуч нори, з яких лізуть вороги. Заготовки — ледь видно
+   * олівцем: найпомітнішим на аркуші має бути бій, а не порожні місця.
    */
   function drawLanes() {
     laneG.clear();
@@ -239,20 +365,23 @@ export function createLaneGame({
 
     for (let r = 0; r < band.rows; r++) {
       const cy = rowY(band, r);
-      // Слот юніта: пунктир і плюсик.
-      dashedRect(laneG, level.slot.x0, cy - h * 0.42, level.slot.x1, cy + h * 0.42, look.pens.blue, 0.45);
+      // Слот юніта: куточки й плюсик.
+      const sh = Math.min(h * 0.42, 0.9);
+      corners(laneG, level.slot.x0, cy - sh, level.slot.x1, cy + sh, look.pens.blue, 0.4);
       const sx = slotX;
-      penStroke(laneG, [[sx - 0.18, cy], [sx + 0.18, cy]], { ...pencil, color: look.pens.blue, alpha: 0.4, width: 0.04 });
-      penStroke(laneG, [[sx, cy - 0.18], [sx, cy + 0.18]], { ...pencil, color: look.pens.blue, alpha: 0.4, width: 0.04 });
+      penStroke(laneG, [[sx - 0.22, cy], [sx + 0.22, cy]], { ...pencil, color: look.pens.blue, alpha: 0.55, width: 0.05 });
+      penStroke(laneG, [[sx, cy - 0.22], [sx, cy + 0.22]], { ...pencil, color: look.pens.blue, alpha: 0.55, width: 0.05 });
 
-      // Фундаменти: пунктир олівцем і молоточок, щоб читалось «тут будують».
+      // Фундаменти: куточки й молоточок олівцем — ледь видно, поки порожньо.
       for (let c = 0; c < plots.cols; c++) {
         const px = plotX(c), half = plots.side / 2;
-        dashedRect(laneG, px - half, cy - half, px + half, cy + half, look.pens.pencil, 0.4);
-        const hp = { ...pencil, width: 0.045, alpha: 0.35, step: 0.3 };
+        corners(laneG, px - half, cy - half, px + half, cy + half, look.pens.pencil, 0.3);
+        const hp = { ...pencil, width: 0.04, alpha: 0.25, step: 0.3 };
         penStroke(laneG, [[px - 0.22, cy + 0.22], [px + 0.12, cy - 0.12]], hp);
         penStroke(laneG, [[px + 0.02, cy - 0.3], [px + 0.3, cy - 0.02], [px + 0.2, cy + 0.08], [px - 0.08, cy - 0.2], [px + 0.02, cy - 0.3]], hp);
       }
+
+      burrow(laneG, level.core.cols - 0.55, cy, h);
     }
   }
 
@@ -265,19 +394,32 @@ export function createLaneGame({
       glowG.rect(0, rowY(band, focusRow) - h / 2, level.core.cols, h)
         .fill({ color: look.pens.marker, alpha: 0.12 });
     }
-    for (let r = 0; r < band.rows; r++) {
-      const cy = rowY(band, r);
-      if (slotsActive) {
-        glowG.rect(level.slot.x0, cy - h * 0.42, level.slot.x1 - level.slot.x0, h * 0.84)
-          .fill({ color: look.pens.marker, alpha: 0.18 });
-      }
-      if (plotsActive) {
-        for (let c = 0; c < plots.cols; c++) {
-          if (town.at(r, c)) continue;
-          const px = plotX(c), half = plots.side / 2;
-          glowG.rect(px - half, cy - half, plots.side, plots.side)
-            .fill({ color: look.pens.marker, alpha: 0.12 });
-        }
+    drawPulse();
+  }
+
+  /**
+   * «Тапни тут» — маркерні кола, але лише там, де це справді порада: слот
+   * ряду без жодного бійця (ряд голий) і перший вільний фундамент, поки в
+   * селі немає колодязя (без нього чорнила не буде). Шістнадцять кіл, що
+   * блимають усюди, знову робили найпомітнішим на аркуші порожнечу.
+   */
+  let pulseKey = '';
+  function drawPulse() {
+    const bare: number[] = [];
+    if (slotsActive) {
+      for (let r = 0; r < band.rows; r++) if (!army.allies.some((a) => a.row === r)) bare.push(r);
+    }
+    const needWell = plotsActive && !town.buildings.some((b) => b.def.effect.type === 'well');
+    const key = bare.join(',') + '|' + needWell;
+    if (key === pulseKey) return;
+    pulseKey = key;
+    pulseG.clear();
+    for (const r of bare) pulseG.circle(slotX, rowY(band, r), 0.42).fill({ color: look.pens.marker, alpha: 0.7 });
+    if (needWell) {
+      for (let r = 0; r < band.rows; r++) {
+        const c = [...Array(plots.cols).keys()].find((k) => !town.at(r, k));
+        if (c == null) continue;
+        pulseG.circle(plotX(c) + 0.04, rowY(band, r) - 0.04, 0.38).fill({ color: look.pens.marker, alpha: 0.5 });
       }
     }
   }
@@ -301,9 +443,9 @@ export function createLaneGame({
       };
       if (on) {
         // Світло за лінзою: маркерний конус у бік ворогів.
-        laserG.poly([x + 0.32, cy - 0.1, x + 1.1, cy - 0.34, x + 1.1, cy + 0.34, x + 0.32, cy + 0.1])
-          .fill({ color: look.pens.marker, alpha: 0.5 });
-        laserG.circle(x + 0.32, cy, 0.22).fill({ color: look.pens.marker, alpha: 0.7 });
+        laserG.poly([x + 0.32, cy - 0.1, x + 0.9, cy - 0.26, x + 0.9, cy + 0.26, x + 0.32, cy + 0.1])
+          .fill({ color: look.pens.marker, alpha: 0.22 });
+        laserG.circle(x + 0.32, cy, 0.2).fill({ color: look.pens.marker, alpha: 0.6 });
       }
       // Ніжка й основа.
       penStroke(laserG, [[x, cy + 0.32], [x, cy + 0.62]], pen);
@@ -328,12 +470,13 @@ export function createLaneGame({
   const enemies: LaneEnemy[] = [];
   const state: LaneState = {
     lives: level.lives, maxLives: level.lives,
-    wave: 0, waves: level.waves.length, phase: 'break',
+    wave: 0, waves: level.endless ? 0 : level.waves.length, phase: 'break',
     breakLeft: level.waveBreak ?? 5,
     spawned: 0, killed: 0, leaked: 0,
   };
   let spawnTimer = 0, waveLeft = 0;
   let nextEnemyId = 1;
+  const events: LaneEvent[] = [];
 
   /** Заряди лазера по рядах: як газонокосарки в PvZ, по одному на ряд. */
   const lasers: number[] = Array.from({ length: band.rows }, () => level.laser?.charges ?? 0);
@@ -594,18 +737,27 @@ export function createLaneGame({
 
   const plotCenter = (row: number, col: number): Vec2 => [plotX(col), rowY(band, row)];
 
+  function dropAt(): Vec2 | null {
+    for (const b of town.buildings) {
+      const art = buildingArt.get(b.id);
+      if (art?.drop) return [b.x, rowY(band, b.row) + art.drop.y * layout.spriteScale * artK];
+    }
+    return null;
+  }
+
   function collectAt(cx: number, cy: number): boolean {
     for (const b of town.buildings) {
       const art = buildingArt.get(b.id);
       if (!art?.drop) continue;
-      // Крапля — дитина рига, а риг масштабований spriteScale: у світ її y іде через масштаб.
-      const dx = cx - b.x, dy = cy - (rowY(band, b.row) + art.drop.y * layout.spriteScale);
+      // Крапля — дитина рига, а риг масштабований spriteScale × artScale: у світ її y іде через масштаб.
+      const dropY = rowY(band, b.row) + art.drop.y * layout.spriteScale * artK;
+      const dx = cx - b.x, dy = cy - dropY;
       if (Math.hypot(dx, dy) > 0.9) continue;
       const ink = town.collect(b);
       if (!ink) continue;
       // Крапля летить у ручку тим самим польотом, що й будь-яке чорнило, і
       // зараховується на прильоті.
-      fx.inkDrop(b.x, rowY(band, b.row) + art.drop.y * layout.spriteScale, ink, gaugeWorld, () => wallet.earn(ink));
+      fx.inkDrop(b.x, dropY, ink, gaugeWorld, () => wallet.earn(ink));
       hideDrop(art);
       return true;
     }
@@ -613,17 +765,60 @@ export function createLaneGame({
   }
 
   // --- вороги ----------------------------------------------------------------
+  /** Зріст ворога на екрані: хітбокс з даних × масштаб малюнка. */
+  const tall = (e: LaneEnemy) => e.def.size * artK * (e.def.scale ?? 1);
+
+  /** Корона боса: три зубці маркером над головою, щоб його впізнавали здалеку. */
+  function crown(def: LaneEnemyDef): Graphics {
+    const g = new Graphics();
+    const top = headTop(def);
+    const w = 0.42, hh = 0.28;
+    const pts: Vec2[] = [[-w, top], [-w, top - hh], [-w / 2, top - hh * 0.45], [0, top - hh * 1.15], [w / 2, top - hh * 0.45], [w, top - hh], [w, top], [-w, top]];
+    g.poly(pts.flat()).fill({ color: look.pens.marker, alpha: 0.85 });
+    penStroke(g, pts, { color: look.pens.orange ?? look.pens.red, width: 0.05, alpha: 0.95, jitter: 0.01, step: 0.15, overshoot: 0.02, halo: 0.15 });
+    return g;
+  }
+
+  /** Маківка рига в його власних одиницях: від якоря удару трохи вгору.
+   *  Хітбокс для цього не годиться — малюнок здорованя нижчий за коробку. */
+  const headTop = (def: LaneEnemyDef) => (rigDefs[def.rig]?.anchors?.hit?.[1] ?? -def.size / 2) * 0.75 - 0.05;
+
+  /** Смуга hp над босом: штрихування, що коротшає. */
+  function drawBar(e: LaneEnemy) {
+    const g = e.bar;
+    if (!g || e.barHp === e.hp) return;
+    e.barHp = e.hp;
+    g.clear();
+    const w = 1.1, y = headTop(e.def) - 0.62;
+    const p = Math.max(0, e.hp / e.maxHp);
+    penRectLite(g, -w / 2, y, w, 0.2, look.pens.pencil);
+    if (p > 0) {
+      g.rect(-w / 2 + 0.03, y + 0.03, (w - 0.06) * p, 0.14).fill({ color: look.pens.red, alpha: 0.75 });
+    }
+  }
+  function penRectLite(g: Graphics, x: number, y: number, w: number, h: number, color: string | number) {
+    penStroke(g, [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]],
+      { color, width: 0.035, alpha: 0.7, jitter: 0.008, step: 0.2, overshoot: 0.02, halo: 0 });
+  }
+
   function spawnEnemy(row: number | null = null, typeId = 'earling', hpMul = 1): LaneEnemy {
     const r = row ?? Math.floor(Math.random() * band.rows);
     const def = enemyDefs[typeId];
     const y = rowY(band, r);
-    const rig = mount(buildRig(rigDefs[def.rig], textures, parts, look), level.spawnX, y);
+    const rig = mount(buildRig(rigDefs[def.rig], textures, parts, look), level.spawnX, y, def.scale ?? 1);
+    const hp = Math.round(def.hp * hpMul);
     const e: LaneEnemy = {
       id: nextEnemyId++, def, rig, row: r, y,
-      x: level.spawnX, hp: Math.round(def.hp * hpMul),
+      x: level.spawnX, hp, maxHp: hp,
       cls: def.cls, damage: def.damage, rate: def.rate, reach: def.reach, speed: def.speed,
       cd: 0, moving: true, vs: def.vs,
     };
+    if (def.boss) {
+      rig.view.addChild(crown(def));
+      e.bar = new Graphics();
+      rig.view.addChild(e.bar);
+      drawBar(e);
+    }
     enemies.push(e);
     state.spawned++;
     return e;
@@ -635,31 +830,52 @@ export function createLaneGame({
     if (i >= 0) enemies.splice(i, 1);
   }
 
-  /** Смерть ворога: закреслення й зняття. Чорнила з нього не падає — його дають будівлі. */
+  /** Смерть ворога: закреслення, клякса й зняття. Чорнила з нього не падає — його дають будівлі. */
   function killEnemy(e: LaneEnemy) {
     if (!enemies.includes(e)) return;
-    fx.strikeOut(e.x, e.y, e.def.size * 0.8, e.def.size);
+    const s = tall(e);
+    fx.strikeOut(e.x, e.y, s * 0.8, s);
+    splat(e.x, e.y + 0.3, 0.35 + s * 0.2, look.pens.red);
+    if (e.def.boss) { shake(0.35, 0.5); hitstop(0.12); }
+    else if (e.def.cls === 'armored') shake(0.08, 0.15);
     state.killed++;
     despawn(e);
   }
 
   /**
    * Ворог на лінії дому. Поки в ряду є заряд лазера — промінь спалює всіх у
-   * цьому ряду (як газонокосарка в PvZ), і життя ціле. Заряду немає — мінус
-   * життя.
+   * цьому ряду (як газонокосарка в PvZ), і життя ціле. Боса промінь не
+   * спалює: відкидає назад і знімає половину hp — інакше бос-хвиля
+   * вирішувалась би одним зарядом. Заряду немає — мінус життя (бос — три).
    */
   function leak(e: LaneEnemy) {
     if (!enemies.includes(e)) return;
     if (lasers[e.row] > 0) {
       lasers[e.row]--;
       fx.laser(level.homeX + 0.32, level.spawnX + 0.5, e.y);
-      for (const foe of [...enemies]) if (foe.row === e.row) killEnemy(foe);
+      shake(0.3, 0.35);
+      hitstop(0.08);
+      for (const foe of [...enemies]) {
+        if (foe.row !== e.row) continue;
+        if (foe.def.boss) {
+          foe.hp -= Math.ceil(foe.maxHp * 0.5);
+          foe.x = Math.min(level.spawnX - 1, foe.x + 5);
+          jolt(foe.rig, 0.5, 1);
+          if (foe.hp <= 0) killEnemy(foe);
+          else drawBar(foe);
+        } else {
+          killEnemy(foe);
+        }
+      }
       drawLasers();
       return;
     }
+    const cost = e.def.boss ? 3 : 1;
     fx.strikeOut(level.homeX, e.y, 0.8, 1.2, look.pens.red);
-    state.lives = Math.max(0, state.lives - 1);
+    shake(0.25, 0.3);
+    state.lives = Math.max(0, state.lives - cost);
     state.leaked++;
+    events.push({ type: 'life', lives: state.lives });
     despawn(e);
     if (state.lives === 0) state.phase = 'lost';
   }
@@ -684,8 +900,11 @@ export function createLaneGame({
         const h = army.hitOf(s.ally, s.target);
         s.target.hp -= h.amount;
         fx.spark(s.x, s.y);
-        fx.number(s.target.x, s.target.y - s.target.def.size - 0.3, h.amount, { bonus: h.bonus, penalty: h.penalty });
+        jolt(s.target.rig, h.bonus ? 0.2 : 0.1, h.bonus ? 1 : 0.6);
+        if (h.bonus) hitstop(0.035);
+        fx.number(s.target.x, s.target.y - tall(s.target) - 0.2, h.amount, { bonus: h.bonus, penalty: h.penalty });
         if (s.target.hp <= 0) killEnemy(s.target);
+        else drawBar(s.target);
       } else if (s.x < level.spawnX + 1.5) {
         // Ще летить. Ціль могла зникнути — риска однаково долітає до краю й
         // гасне там, а не блимає на місці.
@@ -700,7 +919,7 @@ export function createLaneGame({
   /** Наступна починається, коли поле чисте, а не за таймером: перерва — це час
    *  домалювати, і вкорочувати її автоматично нечесно. */
   function updateWaves(dt: number) {
-    const w = level.waves[state.wave];
+    const w = waveOf(level, state.wave);
 
     if (state.phase === 'break') {
       state.breakLeft -= dt;
@@ -708,6 +927,14 @@ export function createLaneGame({
       state.phase = 'wave';
       waveLeft = w.count;
       spawnTimer = 0;
+      const last = !level.endless && state.wave === level.waves.length - 1;
+      events.push({ type: 'wave', n: state.wave + 1, last });
+      if (w.boss) {
+        // Бос виходить першим і по центру, решта хвилі — за ним.
+        spawnEnemy(Math.floor(band.rows / 2), w.boss, w.hp ?? 1);
+        events.push({ type: 'boss' });
+        spawnTimer = w.every * 1.5;
+      }
       return;
     }
 
@@ -721,7 +948,7 @@ export function createLaneGame({
     }
 
     if (enemies.length) return;
-    if (state.wave + 1 >= level.waves.length) { state.phase = 'won'; return; }
+    if (!level.endless && state.wave + 1 >= level.waves.length) { state.phase = 'won'; return; }
     state.wave++;
     state.phase = 'break';
     state.breakLeft = level.waveBreak ?? 5;
@@ -731,8 +958,14 @@ export function createLaneGame({
   }
 
   // --- цикл ------------------------------------------------------------------
+  let pulseT = 0;
   function update(dtMs: number) {
-    const dt = dtMs / 1000;
+    const realDt = dtMs / 1000;
+    // Хітстоп: бій і риги завмирають на мить, ефекти й тряска — ні.
+    const frozen = freeze > 0;
+    if (frozen) freeze = Math.max(0, freeze - realDt);
+    const dt = frozen ? 0 : realDt;
+    dtMs = dt * 1000;
     const over = state.phase === 'won' || state.phase === 'lost';
 
     if (!over) {
@@ -764,8 +997,11 @@ export function createLaneGame({
           const foe = ev.foe as LaneEnemy;
           allyArt.get(ev.ally.id)?.rig.fire('attack');
           foe.rig.fire('hit');
-          fx.number(foe.x, foe.y - foe.def.size - 0.3, ev.amount, { bonus: ev.bonus, penalty: ev.penalty });
+          jolt(foe.rig, ev.bonus ? 0.28 : 0.15, ev.bonus ? 1 : 0.7);
+          if (ev.bonus) { hitstop(0.05); shake(0.05, 0.12); }
+          fx.number(foe.x, foe.y - tall(foe) - 0.2, ev.amount, { bonus: ev.bonus, penalty: ev.penalty });
           if (ev.killed) killEnemy(foe);
+          else drawBar(foe);
         } else if (ev.type === 'shoot') {
           shoot(ev.ally, ev.foe as LaneEnemy);
         } else {
@@ -782,11 +1018,15 @@ export function createLaneGame({
         const foe = ev.foe as LaneEnemy;
         if (ev.type === 'hit') {
           foe.rig.fire('attack');
-          allyArt.get(ev.ally.id)?.rig.fire('hit');
-          fx.number(ev.ally.x, rowY(band, ev.ally.row) - 1.1, ev.amount, { bonus: ev.amount > foe.def.damage });
+          const allyRigNow = allyArt.get(ev.ally.id)?.rig;
+          allyRigNow?.fire('hit');
+          jolt(allyRigNow, -0.14, 0.7);
+          fx.number(ev.ally.x, rowY(band, ev.ally.row) - 1.5 * artK, ev.amount, { bonus: ev.amount > foe.def.damage });
+          if (foe.def.boss || foe.def.cls === 'armored') shake(0.06, 0.12);
           if (ev.killed) {
             // Своїх закреслюємо синім: колір і тут каже, хто чий.
-            fx.strikeOut(ev.ally.x, rowY(band, ev.ally.row) + 0.75, 1.0, 1.5, look.pens.blue);
+            fx.strikeOut(ev.ally.x, rowY(band, ev.ally.row) + 0.75, 1.0 * artK, 1.5 * artK, look.pens.blue);
+            splat(ev.ally.x, rowY(band, ev.ally.row) + 0.4, 0.5, look.pens.blue);
             dropAlly(ev.ally);
           }
         } else if (ev.type === 'smash') {
@@ -794,6 +1034,7 @@ export function createLaneGame({
           foe.rig.fire('attack');
           const art = buildingArt.get(b.id);
           art?.rig.fire('hit');
+          jolt(art?.rig, 0, 0.5);
           fx.number(b.x, rowY(band, b.row) - b.def.size[1] / 2 - 0.4, ev.amount);
           if (town.damage(b, ev.amount)) {
             fx.strikeOut(b.x, rowY(band, b.row) + b.def.size[1] / 2, b.def.size[0], b.def.size[1], look.pens.blue);
@@ -818,6 +1059,17 @@ export function createLaneGame({
         e.rig.moving = e.moving;
         e.rig.view.position.set(e.x, e.y);
       }
+      // Відкидання й стусан — лише малюнок: модель стоїть, де стояла.
+      const base = layout.spriteScale * artK;
+      for (const [rig, v] of vis) {
+        if (v.kb === 0 && v.punch === 0) continue;
+        rig.view.x += v.kb;
+        rig.view.scale.set(base * v.extra * (1 + 0.16 * v.punch));
+        v.kb *= Math.exp(-realDt * 14);
+        v.punch *= Math.exp(-realDt * 12);
+        if (Math.abs(v.kb) < 0.004) v.kb = 0;
+        if (v.punch < 0.01) { v.punch = 0; rig.view.scale.set(base * v.extra); }
+      }
       // Крапля над колодязем погойдується: живе, а не намальована.
       for (const art of buildingArt.values()) {
         art.t += dt;
@@ -825,13 +1077,33 @@ export function createLaneGame({
       }
     }
 
-    fx.step(dt);
+    fx.step(realDt);
+    stepShake(realDt);
+    stepSplats(realDt);
+    pulseT += realDt;
+    pulseG.alpha = 0.55 + 0.45 * Math.sin(pulseT * 5);
+    drawPulse();
     for (const r of rigs) r.update(dtMs);
     units.children.sort((a, b) => a.y - b.y);
   }
 
   function rescale(s: number) {
-    for (const r of rigs) r.setScale(s);
+    for (const r of rigs) r.setScale(s * artK * (vis.get(r)?.extra ?? 1));
+  }
+
+  function destroy() {
+    for (const a of allyArt.values()) a.tex.destroy(true);
+    for (const b of buildingArt.values()) b.tex.destroy(true);
+    allyArt.clear();
+    buildingArt.clear();
+    shots.length = 0;
+    rigs.length = 0;
+    vis.clear();
+    for (const c of [laneG, decals, glowG, pulseG, laserG, units, shotLayer]) {
+      world.removeChild(c);
+      c.destroy({ children: true });
+    }
+    world.position.set(layout.ox, layout.oy);
   }
 
   drawLanes();
@@ -839,7 +1111,7 @@ export function createLaneGame({
 
   return {
     state, wallet, enemies, army, town, band, level, slotX, lasers,
-    spawnEnemy, summon, build, plotAt, plotCenter, collectAt, update, rescale,
+    spawnEnemy, summon, build, plotAt, plotCenter, collectAt, dropAt, update, rescale,
     setSlotsActive(on) { if (on === slotsActive) return; slotsActive = on; drawGlow(); },
     setPlotsActive(on) { if (on === plotsActive) return; plotsActive = on; drawGlow(); },
     setFocusRow(row) { if (row === focusRow) return; focusRow = row; drawGlow(); },
@@ -847,6 +1119,8 @@ export function createLaneGame({
     isBuildingUnlocked: (id) => unlockedB.has(id),
     takeUnlocks() { return newUnlocks.splice(0); },
     setGauge(at) { gaugeAt = at; },
+    takeEvents() { return events.splice(0); },
     resize() { drawLanes(); drawGlow(); drawLasers(); },
+    destroy,
   };
 }

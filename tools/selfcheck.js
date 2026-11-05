@@ -23,6 +23,10 @@ import { rowY, rowOf, rowHeight, pickWeighted } from '../dist/model/lane.js';
 import { rarityOf, counterMul, unitStats, weaponIds, unlockedAt } from '../dist/model/weapons.js';
 import { createArmy } from '../dist/model/units.js';
 import { createTown, buildingIds } from '../dist/model/buildings.js';
+import {
+  unlockedThrough, pageLevel, endlessLevel, endlessWave, waveOf, starsFor, parseProgress, recordPage,
+  recordEndless, pageOpen, endlessOpen, resumePage, emptyProgress,
+} from '../dist/model/campaign.js';
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
@@ -914,6 +918,8 @@ const enemyIds = Object.keys(EN).filter((k) => !k.startsWith('_'));
   const band = { y0: LL.band.y0, y1: LL.band.y1, rows: LL.rows };
   assert.ok(rowHeight(band) >= 1, `ряд ${rowHeight(band)} клітинки — вороги зіллються`);
   for (const id of enemyIds) {
+    // Бос навмисно вищий за ряд: його мають бачити здалеку.
+    if (EN[id].boss) continue;
     assert.ok(EN[id].size <= rowHeight(band), `${id} заввишки ${EN[id].size} не влазить у ряд ${rowHeight(band)}`);
   }
 
@@ -949,6 +955,20 @@ const enemyIds = Object.keys(EN).filter((k) => !k.startsWith('_'));
     }
     return ev;
   };
+
+  // Довша рука ворога: здоровань (засяг 0.8) спиняється перед мечем (0.7) за
+  // лінією фронту. Колись боєць стояв на лінії й не діставав, а ворог бив його
+  // безкарно — і хвиля не закінчувалась ніколи. Тепер боєць підступає.
+  for (const wid of ['sword', 'mace', 'spear']) {
+    const a = mk();
+    a.summon(wid, 0, 0.6);
+    for (let t = 0; t < 12; t += 0.05) a.stepAllies([], 0.05); // боєць уже стоїть на лінії
+    const f = foe({ x: 14, hp: 120, cls: 'armored', reach: 0.8, damage: 14, rate: 0.5, speed: 0.3 });
+    let t = 0;
+    for (; t < 90 && f.hp > 0 && a.allies.length; t += 0.05) { a.stepAllies([f], 0.05); a.stepFoes([f], 0.05); }
+    assert.ok(f.hp < 120, `${wid}: здоровань із довшою рукою б'є ${Math.round(t)} с, а боєць жодного разу не дістав`);
+    for (const al of a.allies) assert.ok(al.x <= 11 + 1.3, `${wid}: боєць побіг за ворогом далеко за лінію (${al.x})`);
+  }
 
   // Виклик: зброя з даних, рідкість із якості, слот, відмови.
   {
@@ -1346,6 +1366,102 @@ const enemyIds = Object.keys(EN).filter((k) => !k.startsWith('_'));
     if (id.startsWith('_') || !def.file.startsWith('proc:')) continue;
     assert.ok(doodles.has(def.file.slice(5)), `частина ${id}: генератора ${def.file} немає в procart.ts`);
   }
+}
+
+
+// --- кампанія: сторінки, відкриття, зірки, збереження ------------------------
+// Тихо ламається тут ось що: сторінка, де бігуни приходять раніше за спис;
+// зброя, яка не відкривається ніколи; зірки, що падають при гіршому проходженні;
+// зіпсоване збереження, яке валить гру на старті.
+{
+  const CP = JSON.parse(readFileSync(root + 'data/campaign.json', 'utf8'));
+  const ids = new Set();
+  assert.ok(CP.pages.length >= 5, 'сторінок замало для кампанії');
+  for (const [i, p] of CP.pages.entries()) {
+    assert.ok(p.id && !ids.has(p.id), `сторінка ${i}: id ${p.id} порожній або повторюється`);
+    ids.add(p.id);
+    assert.ok(p.title, `сторінка ${p.id} без назви`);
+    assert.ok(p.rows >= 3 && p.rows <= 5, `${p.id}: ${p.rows} рядів — поза 3..5`);
+    assert.ok(p.lives >= 1, `${p.id}: без життів`);
+    const band = { y0: LL.band.y0, y1: LL.band.y1, rows: p.rows };
+    assert.ok(rowHeight(band) >= 1.5, `${p.id}: ряд ${rowHeight(band)} — персонажі зіллються`);
+    assert.ok(LL.plots.side <= rowHeight(band), `${p.id}: фундамент вищий за ряд`);
+    for (const id of p.unlock?.weapons ?? []) assert.ok(WP.weapons[id], `${p.id}: зброї ${id} немає`);
+    for (const id of p.unlock?.buildings ?? []) assert.ok(BD.buildings[id], `${p.id}: будівлі ${id} немає`);
+    assert.ok(p.waves.length >= 1, `${p.id}: хвиль немає`);
+    const have = unlockedThrough(CP, i);
+    for (const [k, w] of p.waves.entries()) {
+      assert.ok(w.count > 0 && w.every > 0, `${p.id} хвиля ${k}: порожня`);
+      for (const id of Object.keys(w.mix)) assert.ok(EN[id] && !EN[id].boss, `${p.id} хвиля ${k}: ворог ${id} невідомий або бос у mix`);
+      if (w.boss) assert.ok(EN[w.boss]?.boss, `${p.id} хвиля ${k}: ${w.boss} не бос`);
+      // Контра до класу ворога має бути відкрита на тій самій сторінці або раніше.
+      for (const [ec, wc] of [['swift', 'quick'], ['armored', 'heavy']]) {
+        const comes = Object.keys(w.mix).some((id) => EN[id].cls === ec) || (w.boss && EN[w.boss].cls === ec);
+        if (comes) assert.ok(have.weapons.some((id) => WP.weapons[id].cls === wc), `${p.id}: ${ec} без ${wc} зброї`);
+      }
+    }
+    const L = pageLevel(LL, CP, i);
+    assert.equal(L.unlocks.length + L.buildingUnlocks.length, 0, 'у кампанії відкриття всередині рівня мають бути вимкнені');
+    assert.deepEqual(L.startWeapons, have.weapons);
+    assert.equal(L.rows, p.rows);
+    assert.equal(waveOf(L, 0), p.waves[0]);
+  }
+  // Перша сторінка: обидва роди зброї й колодязь, перша хвиля — без контрів.
+  const first = unlockedThrough(CP, 0);
+  assert.ok(first.buildings.includes('well'), 'на першій сторінці немає колодязя — чорнила не буде');
+  assert.ok(new Set(first.weapons.map((id) => WP.weapons[id].kind)).size >= 2, 'на першій сторінці один рід зброї');
+  assert.deepEqual(Object.keys(CP.pages[0].waves[0].mix), ['earling'], 'перша хвиля кампанії вже з контрами');
+  // Усе відкривається до кінця зошита.
+  const all = unlockedThrough(CP, CP.pages.length - 1);
+  for (const id of weaponIds(WP)) assert.ok(all.weapons.includes(id), `зброя ${id} не відкривається ніколи`);
+  for (const id of buildingIds(BD)) assert.ok(all.buildings.includes(id), `будівля ${id} не відкривається ніколи`);
+
+  // Нескінченний режим: генератор не видає дурниць і на тридцятій хвилі.
+  assert.ok(ids.has(CP.endless.after), `нескінченний відкривається після ${CP.endless.after}, а такої сторінки немає`);
+  const E = endlessLevel(LL, CP);
+  assert.ok(E.endless && E.startWeapons.length === all.weapons.length);
+  let prevCount = 0, bosses = 0;
+  for (let i = 0; i < 30; i++) {
+    const w = endlessWave(i);
+    assert.ok(w.count > 0 && w.every >= 1, `нескінченна хвиля ${i}: ${w.count} / ${w.every}`);
+    for (const id of Object.keys(w.mix)) assert.ok(EN[id], `нескінченна хвиля ${i}: ${id}`);
+    if (w.boss) { bosses++; assert.ok(EN[w.boss]?.boss); } else assert.ok(w.count >= prevCount, `нескінченна хвиля ${i} менша за попередню`);
+    if (!w.boss) prevCount = w.count;
+    assert.equal(waveOf(E, i).count, w.count);
+  }
+  assert.equal(bosses, 6, 'бос має приходити кожну п\'яту хвилю');
+  assert.ok(Object.keys(endlessWave(0).mix).filter((k) => endlessWave(0).mix[k] > 0).join() === 'earling', 'перша нескінченна хвиля вже з контрами');
+
+  // Бос: лазер його не спалює, і в ряд він не влазить навмисно.
+  assert.ok(EN.boss?.boss && EN.boss.hp > EN.brute.hp * 3, 'бос слабший за трьох здорованів');
+
+  // Зірки.
+  assert.equal(starsFor(5, 5), 3);
+  assert.equal(starsFor(3, 5), 2);
+  assert.equal(starsFor(2, 5), 1);
+  assert.equal(starsFor(0, 5), 0);
+  assert.equal(starsFor(3, 6), 2);
+
+  // Збереження: сміття на вході — порожній прогрес, а не виняток.
+  for (const junk of [null, '', '{', '[]', '{"stars":5}', '{"stars":{"p1":9,"p2":"x","p3":2}}']) {
+    const p = parseProgress(junk);
+    assert.equal(p.v, 1);
+    for (const n of Object.values(p.stars)) assert.ok(n >= 1 && n <= 3);
+  }
+  assert.deepEqual(parseProgress('{"stars":{"p1":9,"p3":2}}').stars, { p3: 2 });
+  const pr = emptyProgress();
+  assert.ok(pageOpen(CP, pr, 0) && !pageOpen(CP, pr, 1), 'друга сторінка відкрита без проходження першої');
+  assert.equal(resumePage(CP, pr), 0);
+  assert.ok(recordPage(pr, 'p1', 2));
+  assert.ok(!recordPage(pr, 'p1', 1), 'гірше проходження зменшило зірки');
+  assert.equal(pr.stars.p1, 2);
+  assert.ok(recordPage(pr, 'p1', 3));
+  assert.ok(pageOpen(CP, pr, 1));
+  assert.equal(resumePage(CP, pr), 1);
+  assert.ok(!endlessOpen(CP, pr));
+  assert.ok(recordEndless(pr, 7) && !recordEndless(pr, 5) && pr.endlessBest === 7);
+  const back = parseProgress(JSON.stringify(pr));
+  assert.deepEqual(back, pr, 'прогрес не пережив запис і читання');
 }
 
 console.log('selfcheck: ok');

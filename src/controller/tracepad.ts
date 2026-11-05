@@ -63,9 +63,12 @@ export interface TracePad {
   show(outline: Strokes, opts?: ShowOpts): Promise<Traced | null>;
   /** Гравець обрав інший трафарет на полиці: контур новий, штрихи з нуля. */
   setOutline(outline: Strokes): void;
+  /** Закрити рамку ззовні (рівень скінчився, меню): обіцянка повертає null. */
+  cancel(): void;
 }
 
-const LIVE = { width: 2.2, alpha: 0.85, jitter: 0.5, step: 6, overshoot: 0, halo: 0.1, pressure: 0.15 };
+// Живий штрих — перо, а не маркер: тонкий, з натиском, майже без ореолу.
+const LIVE = { width: 2.2, alpha: 0.9, jitter: 0.45, step: 6, overshoot: 0, halo: 0.04, pressure: 0.3 };
 
 export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }: TracePadOpts): TracePad {
   const { magnet = 0.7, tol = 0.08, holdMs = 800, idleMs = 700 } = cfg;
@@ -198,8 +201,8 @@ export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }: Tr
     for (const s of strokes) {
       if (s.length < 2) continue;
       penStroke(clean, magnetize(tpl, s, magnet).map(toScreen), {
-        color: look.pens.blue, width: box.side * 0.026, alpha: 0.9,
-        jitter: box.side * 0.003, step: box.side * 0.045, overshoot: box.side * 0.006, halo: 0.14,
+        color: look.pens.blue, width: box.side * 0.02, alpha: 0.92,
+        jitter: box.side * 0.003, step: box.side * 0.045, overshoot: box.side * 0.006, halo: 0.08,
       });
     }
     drawNote(score);
@@ -243,7 +246,7 @@ export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }: Tr
     if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 0.008) return;
     cur.push(p);
     // Домальовуємо лише новий відрізок — накопичуємо лінію, а не перемальовуємо.
-    penStroke(live, [toScreen(last), toScreen(p)], { ...LIVE, color: look.pens.blue, width: box.side * 0.022 });
+    penStroke(live, [toScreen(last), toScreen(p)], { ...LIVE, color: look.pens.blue, width: box.side * 0.015 });
   }
 
   /** Кнопки «готово» немає: зараховуємо, коли рука спинилась.
@@ -298,6 +301,13 @@ export function createTracePad({ canvas, layer, sheetLayer, look, cfg = {} }: Tr
     },
 
     setOutline,
+
+    cancel() {
+      if (!view.visible) return;
+      const r = done;
+      close();
+      r?.(null);
+    },
 
     show(outline, opts = {}) {
       starsOf = opts.stars;

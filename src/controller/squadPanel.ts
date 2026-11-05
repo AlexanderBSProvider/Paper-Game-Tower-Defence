@@ -40,6 +40,8 @@ export interface SquadPanelOpts {
   hud: LaneHud;
   /** поки відкрита рамка обведення, поле не приймає ввід */
   blocked?: () => boolean;
+  /** назва рівня для заголовка полиці («Сторінка 3 · Броня») */
+  title?: string;
 }
 
 export interface SquadPanel {
@@ -51,14 +53,18 @@ export interface SquadPanel {
   readonly tool: string;
   readonly buildTool: string;
   update(dt: number): void;
+  /** Зняти слухачів і малюнки: рівень закінчився чи перезапускається. */
+  destroy(): void;
 }
 
 /** Ширина полиці ліворуч від рамки, в px екрана. */
 const shelfWidth = (L: Layout) => Math.min(170, Math.max(96, L.w * 0.3));
 
 export function createSquadPanel({
-  canvas, app, hudLayer, look, layout, game, weapons, buildings, tracePad, shelf, hud, blocked,
+  canvas, app, hudLayer, look, layout, game, weapons, buildings, tracePad, shelf, hud, blocked, title,
 }: SquadPanelOpts): SquadPanel {
+  /** Після destroy() рамка, що ще була відкрита, повертається в нікуди: її результат ігноруємо. */
+  let dead = false;
   const fly = new Graphics(); // обведене, що стискається на місце
   hudLayer.addChild(fly);
   const anims: Fx[] = [];
@@ -95,6 +101,12 @@ export function createSquadPanel({
 
   /** Заголовок полиці: яка хвиля зараз і що відкриється наступним у цій групі. */
   function shelfHeader(cards: ShelfCard[]): string {
+    if (!game.level.unlocks.length && !game.level.buildingUnlocks.length) {
+      // Кампанія: усе, що є на сторінці, відкрите з першої секунди.
+      // «з» рукописним шрифтом читається як «3», тому дріб.
+      const w = game.state.waves ? `хвиля ${Math.min(game.state.wave + 1, game.state.waves)}/${game.state.waves}` : `хвиля ${game.state.wave + 1}`;
+      return title ? `${title} · ${w}` : w;
+    }
     const wave = Math.min(game.state.wave + 1, game.state.waves);
     const locked = cards.filter((c) => c.locked && c.unlockWave).sort((a, b) => a.unlockWave! - b.unlockWave!);
     if (!locked.length) return `Хвиля ${wave} з ${game.state.waves} · усе відкрито`;
@@ -104,7 +116,8 @@ export function createSquadPanel({
   }
 
   /** Відкриті першими, замкнені — за хвилею відкриття: полиця читається згори вниз як план. */
-  const ordered = (cards: ShelfCard[]) => [...cards].sort((a, b) =>
+  const campaign = () => !game.level.unlocks.length && !game.level.buildingUnlocks.length;
+  const ordered = (cards: ShelfCard[]) => [...cards].filter((c) => !(campaign() && c.locked)).sort((a, b) =>
     Number(!!a.locked) - Number(!!b.locked) || (a.unlockWave ?? 0) - (b.unlockWave ?? 0));
   const usableB = (id: string) => game.isBuildingUnlocked(id) && game.wallet.ink >= buildings.buildings[id].cost;
 
@@ -196,6 +209,7 @@ export function createSquadPanel({
     });
     const traced = await p;
     shelf.hide();
+    if (dead) return null;
     game.setFocusRow(null);
     if (!traced) busy = false;
     return traced;
@@ -215,6 +229,7 @@ export function createSquadPanel({
 
     const picked = tool;
     shrinkIn(traced.strokes, toScreenX(game.slotX), toScreenY(rowY(game.band, row)), 1, () => {
+      if (dead) return;
       game.summon(picked, row, traced.quality, traced.strokes);
       busy = false;
     });
@@ -236,6 +251,7 @@ export function createSquadPanel({
     const picked = buildTool;
     const [cx, cy] = game.plotCenter(row, col);
     shrinkIn(traced.strokes, toScreenX(cx), toScreenY(cy), buildings.buildings[picked].size[0], () => {
+      if (dead) return;
       game.build(picked, row, col, traced.quality, traced.strokes);
       busy = false;
     });
@@ -267,6 +283,13 @@ export function createSquadPanel({
     get buildTool() { return buildTool; },
     update(dt) {
       for (let i = anims.length - 1; i >= 0; i--) if (anims[i].step(dt)) anims.splice(i, 1);
+    },
+    destroy() {
+      dead = true;
+      canvas.removeEventListener('pointerdown', onDown);
+      anims.length = 0;
+      hudLayer.removeChild(fly);
+      fly.destroy({ children: true });
     },
   };
 }

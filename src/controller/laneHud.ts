@@ -45,11 +45,16 @@ export interface LaneHud {
   tick(dt: number): void;
   /** Центр колби ручки в екранних px — сюди летять краплі чорнила. */
   gaugeAt(): Vec2;
-  /** @returns 'restart', якщо тап забрала фінальна записка, інакше нічого */
+  /** Кінець рівня тепер показує DOM-записка (laneUi), тож тапи HUD не забирає. */
   hit(px: number, py: number): string | null;
+  /** Блимнути серцями: щойно втрачено життя. */
+  flashLives(): void;
+  destroy(): void;
+  announce(items: { id: string; kind: 'weapon' | 'building' }[]): void;
 }
 
 const SLOTS = ['ink', 'lives'];
+const SHOW_CANVAS_END = false;
 
 /** Ручка збоку: корпус, конус і носик. Усередині корпусу видно чорнило. */
 function penIcon(g: Graphics, x: number, y: number, u: number, pen: PenOpts) {
@@ -62,8 +67,43 @@ function penIcon(g: Graphics, x: number, y: number, u: number, pen: PenOpts) {
   return { x: bx + u * 0.035, y: y + 0.17 * u, w: bw - u * 0.07, h: 0.5 * u };
 }
 
+/** Серце-дудл: дві дуги й кінчик. Ціле — заштриховане червоним, втрачене — закреслене олівцем. */
+function heart(g: Graphics, cx: number, cy: number, r: number, alive: boolean, look: Look) {
+  const pts: Vec2[] = [];
+  for (let i = 0; i <= 28; i++) {
+    const t = (i / 28) * Math.PI * 2;
+    // Класична крива серця, стиснута під клітинку.
+    const x = 16 * Math.sin(t) ** 3;
+    const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+    pts.push([cx + (x / 17) * r, cy + (y / 17) * r]);
+  }
+  const pen: PenOpts = { color: alive ? look.pens.red : look.pens.pencil, width: r * 0.16, alpha: alive ? 0.9 : 0.45, jitter: r * 0.03, step: r * 0.35, overshoot: r * 0.05, halo: 0.12 };
+  if (alive) {
+    g.poly(pts.flat()).fill({ color: look.pens.red, alpha: 0.28 });
+    hatch(g, cx - r, cy - r, r * 2, r * 1.8, { color: look.pens.red, gap: r * 0.32, jitterGap: 0.2, width: r * 0.08, alpha: 0.5, angle: -0.7, jitter: r * 0.02, step: r * 0.3, overshoot: 0, halo: 0 });
+  }
+  penStroke(g, pts, pen);
+  if (!alive) {
+    penStroke(g, [[cx - r * 0.9, cy - r * 0.6], [cx + r * 0.9, cy + r * 0.7]], { ...pen, color: look.pens.red, alpha: 0.7 });
+  }
+}
+
+/** Життя — серця в ряд (у два, якщо не влазять). */
+function hearts(g: Graphics, x: number, y: number, w: number, h: number, total: number, alive: number, look: Look) {
+  const perRow = total > 4 ? Math.ceil(total / 2) : total;
+  const rows = Math.ceil(total / perRow);
+  const r = Math.min(w / (perRow * 2.3), h / (rows * 2.3));
+  for (let i = 0; i < total; i++) {
+    const row = Math.floor(i / perRow), k = i % perRow;
+    const n = Math.min(perRow, total - row * perRow);
+    const cx = x + w / 2 + (k - (n - 1) / 2) * r * 2.3;
+    const cy = y + h / 2 + (row - (rows - 1) / 2) * r * 2.3;
+    heart(g, cx, cy, r, i < alive, look);
+  }
+}
+
 /** Життя — рисочки, як рахунок на полях. Втрачені закреслені червоним. */
-function tally(
+export function tally(
   g: Graphics, x: number, y: number, u: number,
   total: number, alive: number, look: Look,
 ) {
@@ -93,6 +133,7 @@ export function createLaneHud({ hud, look, balance, weapons, buildings, game, on
   const toast = new Graphics(); // записка «нова зброя»
   const over = new Graphics();  // фінальна записка поверх усього
   hud.addChild(still, live, toast, over);
+  let flashT = 0;
 
   const slots = new Map<string, Slot>();
   let u = 24;
@@ -116,7 +157,9 @@ export function createLaneHud({ hud, look, balance, weapons, buildings, game, on
   function place(L: Layout) {
     L0 = L;
     const n = SLOTS.length;
-    const top = Math.max(L.oy, L.h * 0.1);
+    // Смуга HUD — усе над рядами: ядро тепер майже на весь екран, і вільне
+    // місце лежить не за ядром, а між його верхом і першим рядом.
+    const top = Math.max(L.oy + game.band.y0 * L.cell * 0.92, L.h * 0.1);
     const side = Math.max(L.ox, 0);
     const vertical = side > top;
 
@@ -126,15 +169,17 @@ export function createLaneHud({ hud, look, balance, weapons, buildings, game, on
       const x = (side - bw) / 2;
       const y0 = (L.h - n * bh) / 2;
       SLOTS.forEach((id, i) => slots.set(id, { x, y: y0 + i * bh, w: bw, h: bh }));
-      waveAt = { x: L.w - side / 2, y: L.h * 0.12 };
+      waveAt = { x: L.w / 2, y: Math.max(u * 0.45, L.oy * 0.5) };
     } else {
       u = Math.min(64, top / 1.62, L.w / (1.25 * 4));
       const bw = 1.2 * u, bh = 1.6 * u;
       // Ручка ліворуч, життя праворуч: між ними місце для записки про зброю.
       const y = (top - bh) / 2;
-      slots.set('ink', { x: L.w * 0.08, y, w: bw, h: bh });
-      slots.set('lives', { x: L.w * 0.92 - bw, y, w: bw, h: bh });
-      waveAt = { x: L.w / 2, y: top - u * 0.4 };
+      slots.set('ink', { x: L.w * 0.04, y, w: bw, h: bh });
+      const lw = Math.min(L.w * 0.22, u * 4.2);
+      // Правий край — під кнопкою меню (40 px + відступ), серця туди не лізуть.
+      slots.set('lives', { x: L.w - 60 - lw, y, w: lw, h: bh });
+      waveAt = { x: L.w / 2, y: top / 2 };
     }
   }
 
@@ -169,14 +214,9 @@ export function createLaneHud({ hud, look, balance, weapons, buildings, game, on
     }
 
     const ls = slots.get('lives');
-    if (ls) tally(live, ls.x + ls.w * 0.14, ls.y, u, game.state.maxLives, game.state.lives, look);
+    if (ls) hearts(live, ls.x, ls.y, ls.w, ls.h, game.state.maxLives, game.state.lives, look);
 
-    if (waveAt) {
-      const size = u * 0.44;
-      const txt = `${Math.min(game.state.wave + 1, game.state.waves)}/${game.state.waves}`;
-      penText(live, txt, waveAt.x - textWidth(txt, size) / 2, waveAt.y - size / 2, size,
-        { color: look.pens.pencil, alpha: 0.7 });
-    }
+    if (waveAt) drawWaves(waveAt.x, waveAt.y);
 
     // Слоти й фундаменти світяться, коли є що намалювати: є куди тапати.
     const active = anyUsable(), plots = anyBuildable();
@@ -184,6 +224,46 @@ export function createLaneHud({ hud, look, balance, weapons, buildings, game, on
     game.setPlotsActive(plots);
 
     shown = { ink, lives: game.state.lives, phase: game.state.phase, wave: game.state.wave, slots: active, plots };
+  }
+
+  /**
+   * Смуга хвиль по верхньому полю: кружечок на хвилю, пройдені закреслені
+   * галочкою, поточна обведена маркером, бос — з короною. У нескінченному
+   * режимі смуги немає кінця — лише номер хвилі великою цифрою.
+   */
+  function drawWaves(cx: number, cy: number) {
+    const st = game.state;
+    const pen: PenOpts = { color: look.pens.pencil, width: u * 0.04, alpha: 0.75, jitter: u * 0.012, step: u * 0.2, overshoot: u * 0.02, halo: 0.08 };
+    if (!st.waves) {
+      const size = u * 0.55, txt = String(st.wave + 1);
+      penText(live, txt, cx - textWidth(txt, size) / 2, cy - size / 2, size, { color: look.pens.blue, alpha: 0.9 });
+      return;
+    }
+    const n = st.waves;
+    const r = Math.min(u * 0.2, (L0.w * 0.36) / (n * 2.6));
+    const gap = r * 2.6;
+    const x0 = cx - ((n - 1) * gap) / 2;
+    penStroke(live, [[x0, cy], [x0 + (n - 1) * gap, cy]], { ...pen, alpha: 0.4 });
+    for (let i = 0; i < n; i++) {
+      const x = x0 + i * gap;
+      const done = i < st.wave || st.phase === 'won';
+      const cur = i === st.wave && st.phase !== 'won';
+      if (cur) live.circle(x, cy, r * 1.35).fill({ color: look.pens.marker, alpha: 0.75 });
+      live.circle(x, cy, r).fill({ color: 0xf6f2e7, alpha: 1 });
+      const boss = game.level.waves[i]?.boss;
+      penCircleLite(x, cy, r, { ...pen, color: done ? look.pens.blue : look.pens.pencil, alpha: done || cur ? 0.9 : 0.55 });
+      if (done) penStroke(live, [[x - r * 0.5, cy], [x - r * 0.1, cy + r * 0.45], [x + r * 0.55, cy - r * 0.5]], { ...pen, color: look.pens.green, width: u * 0.05, alpha: 0.95 });
+      if (boss) {
+        const t = cy - r * 1.25;
+        penStroke(live, [[x - r * 0.7, t], [x - r * 0.7, t - r * 0.6], [x - r * 0.3, t - r * 0.3], [x, t - r * 0.8], [x + r * 0.3, t - r * 0.3], [x + r * 0.7, t - r * 0.6], [x + r * 0.7, t]],
+          { ...pen, color: look.pens.orange ?? look.pens.red, width: u * 0.04, alpha: 0.95 });
+      }
+    }
+  }
+  function penCircleLite(x: number, y: number, r: number, o: PenOpts) {
+    const pts: Vec2[] = [];
+    for (let i = 0; i <= 16; i++) { const a = (i / 16) * Math.PI * 2; pts.push([x + Math.cos(a) * r, y + Math.sin(a) * r]); }
+    penStroke(live, pts, o);
   }
 
   /**
@@ -221,6 +301,9 @@ export function createLaneHud({ hud, look, balance, weapons, buildings, game, on
   function drawEnd() {
     over.clear();
     box = null;
+    // Кінець рівня показує DOM-записка з кнопками (laneUi.ts): там є «далі»,
+    // «ще раз» і сторінки, а перо літер не вміє.
+    if (!SHOW_CANVAS_END) return;
     const st = game.state;
     const win = st.phase === 'won';
     if (!win && st.phase !== 'lost') return;
@@ -277,6 +360,10 @@ export function createLaneHud({ hud, look, balance, weapons, buildings, game, on
 
     /** Дешева перевірка щокадру: перемальовуємо лише коли число змінилось. */
     tick(dt) {
+      if (flashT > 0) {
+        flashT = Math.max(0, flashT - dt);
+        live.alpha = flashT > 0 ? 0.35 + 0.65 * Math.abs(Math.cos(flashT * 14)) : 1;
+      }
       queue.push(...game.takeUnlocks());
       if (toastLeft > 0 || queue.length) {
         if (toastLeft <= 0) toastLeft = TOAST;
@@ -306,5 +393,14 @@ export function createLaneHud({ hud, look, balance, weapons, buildings, game, on
       if (box) { onRestart?.(); return 'restart'; }
       return null;
     },
+
+    flashLives() { flashT = 0.6; },
+
+    destroy() {
+      for (const g of [still, live, toast, over]) { hud.removeChild(g); g.destroy(); }
+    },
+
+    /** Показати записку «нове!» про id: на старті сторінки, що щось приносить. */
+    announce(items: { id: string; kind: 'weapon' | 'building' }[]) { queue.push(...items); },
   };
 }
